@@ -60,7 +60,7 @@ dataset
 ```
 ## 👉 Model Checkpoints
 
-We host our model checkpoints on Baidu Cloud: https://pan.baidu.com/s/1eCuHs3qhd1lyVGqUOdaeFw?pwd=r1pg, Password：r1pg 
+We host our model checkpoints on Baidu Netdisk: https://pan.baidu.com/s/1eCuHs3qhd1lyVGqUOdaeFw?pwd=r1pg, Password：r1pg 
 
 Please download the checkpoint from Baidu Netdisk and place them under **"ckpt/"**.
 
