@@ -6,20 +6,20 @@ This repository hosts the code and resources for the paper **"Interactive Medica
 We collected 110 medical image datasets from various sources and generated the **IMed-361M** dataset, which contains over **361 million masks**, through a rigorous and standardized data processing pipeline. Using this dataset, we developed the **IMIS baseline network**.
 
 <p align="center">
-    <img width="1200" alt="image" src="https://github.com/uni-medical/IMIS-Bench/tree/main/assets/fig1.png">
+    <img width="1000" alt="image" src="https://github.com/uni-medical/IMIS-Bench/blob/main/assets/fig1.png">
 </p>
 
 
 ## 👉 IMIS Benchmark Dataset: IMed-361M
 
 The IMed-361M dataset is the largest publicly available multimodal interactive medical image segmentation dataset, featuring **6.4 million images**, **273.4 million masks** (56 masks per image), **14 imaging modalities**, and **204 segmentation targets**. It ensures diversity across six anatomical groups, fine-grained annotations with most masks covering <2% of the image area, and broad applicability with 83% of images in resolutions between 256×256 and 1024×1024. IMed-361M offers 14.4 times more masks than MedTrinity-25M, significantly surpassing other datasets in scale and mask quantity.
-<p align="center"><img width="1200" alt="image" src="https://github.com/uni-medical/IMIS-Bench/tree/main/assets/fig2.png"></p> 
+<p align="center"><img width="900" alt="image" src="https://github.com/uni-medical/IMIS-Bench/blob/main/assets/fig2.png"></p> 
 
 
 ## 👉 IMIS Network
 
 We simulate continuous interactive segmentation training.
-<p align="center"><img width="1200" alt="image" src="https://github.com/uni-medical/IMIS-Bench/tree/main/assets/fig4.png"></p> 
+<p align="center"><img width="900" alt="image" src="https://github.com/uni-medical/IMIS-Bench/blob/main/assets/fig4.png"></p> 
 
 ## 👉 Installation
 ```sh
