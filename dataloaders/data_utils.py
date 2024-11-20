@@ -128,18 +128,16 @@ def get_bboxes_from_mask(masks, offset=0):
     
 
 if __name__ == '__main__':
-    image_path = r'E:\Myproject\SAM-Med2Dv2\dataloaders\testA_42.png'
+    image_path = r'demo_image'
     import cv2
     import matplotlib.pyplot as plt 
     import numpy as np
     masks = cv2.imread(image_path, 0) // 255.
-    bboxes = get_bboxes_from_mask_new(torch.tensor(masks).unsqueeze(0), offset=0)  
+    bboxes = get_bboxes_from_mask(torch.tensor(masks).unsqueeze(0), offset=0)  
     bboxes = bboxes.squeeze(0).numpy()  
-    print(bboxes)
     plt.imshow(masks, cmap='gray')  
     for box in bboxes:  
         x0, y0, x1, y1 = box  
-        # 在边界框上绘制矩形  
         plt.gca().add_patch(plt.Rectangle((x0, y0), x1-x0, y1-y0, edgecolor='r', facecolor='none'))  
   
     plt.show()
