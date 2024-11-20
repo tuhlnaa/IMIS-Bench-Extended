@@ -1,7 +1,7 @@
 # **IMIS-Benchmark**
 This repository hosts the code and resources for the paper **"Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline"**.
 
-[[`Homepage`](https://cjl-medseg.github.io/IMIS-Homepage/)] [[`Paper`]()] [[`Demo`](https://github.com/uni-medical/IMIS-Bench/blob/main/predictor_example.ipynb)] [[`Model`](https://github.com/uni-medical/IMIS-Bench)]  [[`Data`](https://huggingface.co/datasets/1Junlong/IMed-361M)] 
+[[`Homepage`](https://uni-medical.github.io/IMIS-Benchmark/)] [[`Paper`]()] [[`Demo`](https://github.com/uni-medical/IMIS-Bench/blob/main/predictor_example.ipynb)] [[`Model`](https://github.com/uni-medical/IMIS-Bench)]  [[`Data`](https://huggingface.co/datasets/1Junlong/IMed-361M)] 
 
 We collected 110 medical image datasets from various sources and generated the **IMed-361M** dataset, which contains over **361 million masks**, through a rigorous and standardized data processing pipeline. Using this dataset, we developed the **IMIS baseline network**.
 
