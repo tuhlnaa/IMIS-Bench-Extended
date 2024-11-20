@@ -365,7 +365,6 @@ def get_loader(args):
 if __name__ == "__main__":
     import argparse
     dist.init_process_group(backend='nccl', init_method='tcp://localhost:23456', rank=0, world_size=1)
-
     def set_parse():
         parser = argparse.ArgumentParser()
         parser.add_argument("--data_dir", type=str, default='dataset/BTCV')
@@ -377,47 +376,11 @@ if __name__ == "__main__":
         parser.add_argument('--mask_num', type=int, default=5)
         args = parser.parse_args()
         return args
-
     args = set_parse()
     train_loader = get_loader(args)
-
     for idx, batch in enumerate(train_loader):
         image, label = batch["image"], batch["label"]
         # pseudo = batch['pseudo']
         print(batch['target_list'])
         print(image.shape, label.shape) #, pseudo.shape
         print(batch['gt_prompt']['bboxes'].shape)
-        # print(batch['image_root'])
-        # save_path = 'ataloaders\dataloader_test'
-        # os.makedirs(save_path, exist_ok=True)
-
-        # pre_image = image[0].permute(1,2,0).numpy()
-        # pre_label = label[0:2].squeeze().numpy()
-        # pre_pseudo = pseudo[0:2].squeeze().numpy()
-        # gt_bboxes = batch['gt_prompt']['bboxes'].squeeze().numpy()
-        # pseudo_bboxes = batch['pseudo_prompt']['bboxes'].squeeze().numpy()
-        # print(pre_image.shape, pre_label.shape, pre_pseudo.shape)
-
-        # cv2.imwrite(f'{save_path}/image_{idx}.png', pre_image)
-        # result_label = np.copy(pre_image)
-        # result_pseudo = np.copy(pre_image)
-        # for i in range(2):
-        #     label_image = cv2.convertScaleAbs(pre_label[i] * 255)
-        #     pseudo_image = cv2.convertScaleAbs(pre_pseudo[i] * 255)
-        #     label_color = cv2.applyColorMap(label_image, cv2.COLORMAP_JET)
-
-        #     x_min, y_min, x_max, y_max = gt_bboxes[i]
-        #     cv2.rectangle(label_color, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), thickness=2)
-
-        #     pseudo_color = cv2.applyColorMap(pseudo_image, cv2.COLORMAP_JET)
-        #     x_min, y_min, x_max, y_max = pseudo_bboxes[i]
-        #     cv2.rectangle(pseudo_color, (int(x_min), int(y_min)), (int(x_max), int(y_max)), (0, 255, 0), thickness=2)
-
-        #     result_label = cv2.convertScaleAbs(result_label)
-        #     result_pseudo = cv2.convertScaleAbs(result_pseudo)
-
-        #     result_label = cv2.addWeighted(result_label, 0.8, label_color, 0.4, 0)
-        #     result_pseudo = cv2.addWeighted(result_pseudo, 0.8, pseudo_color, 0.4, 0)
-
-        # cv2.imwrite(f'{save_path}/label_{idx}.png', result_label)
-        # cv2.imwrite(f'{save_path}/pseudo_{idx}.png', result_pseudo)
