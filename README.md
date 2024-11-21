@@ -1,7 +1,7 @@
 # **IMIS-Benchmark**
 This repository hosts the code and resources for the paper **"Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline"**.
 
-[[`Homepage`]()] [[`Paper`]()] [[`Demo`]()] [[`Model`]()]  [[`Data`]()] 
+[[`Homepage`](https://uni-medical.github.io/IMIS-Benchmark/)] [[`Paper`](https://arxiv.org/pdf/2411.12814)] [[`Demo`](https://github.com/uni-medical/IMIS-Bench/blob/main/predictor_example.ipynb)] [[`Model`](https://github.com/uni-medical/IMIS-Bench/tree/main)]  [[`Data`](https://huggingface.co/datasets/1Junlong/IMed-361M/tree/main)] 
 
 We collected 110 medical image datasets from various sources and generated the **IMed-361M** dataset, which contains over **361 million masks**, through a rigorous and standardized data processing pipeline. Using this dataset, we developed the **IMIS baseline network**.
 
@@ -39,7 +39,7 @@ The recommended operating environment is as follows:
 
 
 ## 👉 Datasets
-IMed-361 was created by preprocessing a combination of private and publicly available medical image segmentation datasets. The dataset will be made available on [HuggingFace](). For detailed information about the source datasets, please refer to our [paper](). To help you get started quickly, we have provided a small sample demonstration IMIS-Bench/dataset from IMed-361.
+IMed-361 was created by preprocessing a combination of private and publicly available medical image segmentation datasets. The dataset will be made available on [HuggingFace](https://huggingface.co/datasets/1Junlong/IMed-361M/tree/main). For detailed information about the source datasets, please refer to our [paper](https://arxiv.org/pdf/2411.12814). To help you get started quickly, we have provided a small sample demonstration IMIS-Bench/dataset from IMed-361.
 
 ```sh
 dataset
@@ -91,12 +91,20 @@ python test.py
 - prompt_mode: Specifies the interaction mode, supporting `points`, `bboxes` and `text`.
 - inter_num: Simulate interactive annotation correction times.
 
-<!--
+
 ## 👉 Citation
 
 Please cite our paper if you use the code, model, or data.
 
 ```bibtex
-@article{}
+@article{cheng2024interactivemedicalimagesegmentation,
+      title={Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline}, 
+      author={Junlong Cheng and Bin Fu and Jin Ye and Guoan Wang and Tianbin Li and Haoyu Wang and Ruoyu Li and He Yao and Junren Chen and JingWen Li and Yanzhou Su and Min Zhu and Junjun He},
+      year={2024},
+      eprint={2411.12814},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2411.12814}, 
+}
 ```
--->
+
