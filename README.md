@@ -11,7 +11,7 @@ We collected 110 medical image datasets from various sources and generated the *
 
 ## 🌈 Update
 
-- **🚀[2025-02-27]: Accepted by CVPR2025 Datasets and Evaluation Track!🌟**
+- **🚀[2025-02-27]: IMIS-Benchmark Accepted by CVPR 2025!🌟**
 
 
 ## 👉 IMIS Benchmark Dataset: IMed-361M
