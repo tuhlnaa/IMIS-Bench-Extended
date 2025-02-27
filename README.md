@@ -9,6 +9,10 @@ We collected 110 medical image datasets from various sources and generated the *
     <img width="1000" alt="image" src="https://github.com/uni-medical/IMIS-Bench/blob/main/assets/fig1.png">
 </p>
 
+## 🌈 Update
+
+- **🚀[2025-02-27]: Accepted by CVPR2025 Datasets and Evaluation Track!🌟**
+
 
 ## 👉 IMIS Benchmark Dataset: IMed-361M
 
