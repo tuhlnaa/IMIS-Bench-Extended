@@ -26,7 +26,7 @@ class IMISNet(nn.Module):
         self.prompt_encoder = sam.prompt_encoder
         self.text_model = sam.text_model
         self.text_out_dim = sam.text_out_dim
-        self.tokenizer = AutoTokenizer.from_pretrained('clip-vit-base-patch32')
+        self.tokenizer = AutoTokenizer.from_pretrained('openai/clip-vit-base-patch32')
 
         self.test_mode = test_mode
         self.multimask_output = multimask_output

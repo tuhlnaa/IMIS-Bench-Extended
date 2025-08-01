@@ -145,7 +145,8 @@ class IMISPredictor:
                 class_list.append(pred_classes)
           
         else:
-            outputs = self.model.forward_decoder(self.features, self.image_size, prompt)
+            #outputs = self.model.forward_decoder(self.features, self.image_size, prompt)
+            outputs = self.model.forward_decoder(self.features, prompt)
             # Upscale the masks to the original image resolution
             masks_list.append(self.postprocess_masks(outputs['masks'], self.original_size))
 
