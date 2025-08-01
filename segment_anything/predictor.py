@@ -133,7 +133,9 @@ class IMISPredictor:
             for i in range(boxes.shape[1]):
                 prompt['bboxes'] = boxes[:,i:i+1,...]
                 # Predict masks
-                outputs = self.model.forward_decoder(self.features, self.image_size, prompt)
+                # outputs = self.model.forward_decoder(self.features, self.image_size, prompt)
+                outputs = self.model.forward_decoder(self.features, prompt)
+
                 # Upscale the masks to the original image resolution
                 pre_masks = self.postprocess_masks(outputs['masks'], self.original_size)
                 masks_list.append(pre_masks)
@@ -147,6 +149,7 @@ class IMISPredictor:
         else:
             #outputs = self.model.forward_decoder(self.features, self.image_size, prompt)
             outputs = self.model.forward_decoder(self.features, prompt)
+
             # Upscale the masks to the original image resolution
             masks_list.append(self.postprocess_masks(outputs['masks'], self.original_size))
 

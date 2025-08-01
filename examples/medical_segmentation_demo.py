@@ -128,7 +128,12 @@ class MedicalImageSegmentationDemo:
 
 
 class VisualizationUtils:
-    """Utility class for visualization functions."""
+    """Helper class to manage demo execution with integrated visualization utilities."""
+    
+    def __init__(self, output_path: Path, filename_stem: str):
+        self.output_path = output_path
+        self.filename_stem = filename_stem
+    
     
     @staticmethod
     def show_mask(
@@ -207,22 +212,6 @@ class VisualizationUtils:
             edgecolor='green', facecolor=(0, 0, 0, 0), 
             linewidth=2
         ))
-
-
-class DemoRunner:
-    """Helper class to manage demo execution and reduce code repetition."""
-    
-    def __init__(
-            self, 
-            demo: MedicalImageSegmentationDemo, 
-            vis_utils: VisualizationUtils, 
-            output_path: Path, 
-            filename_stem: str
-        ):
-        self.demo = demo
-        self.vis_utils = vis_utils
-        self.output_path = output_path
-        self.filename_stem = filename_stem
     
 
     def save_plot(self, title: str, suffix: str) -> None:
@@ -238,18 +227,24 @@ class DemoRunner:
             self, 
             image: np.ndarray, 
             masks: np.ndarray, 
-            points: np.ndarray, 
             labels: np.ndarray, 
             title: str, 
-            suffix: str
+            suffix: str, 
+            points: Optional[np.ndarray] = None,
+            boxes: Optional[np.ndarray] = None
         ) -> None:
         """Create and save visualization with mask and points."""
         plt.figure()
         plt.imshow(image)
-        self.vis_utils.show_mask(masks, plt.gca())
-        self.vis_utils.show_points(points, labels, plt.gca())
+        self.show_mask(masks, plt.gca())
+
+        if points is not None:
+            self.show_points(points, labels, plt.gca())
+        elif boxes is not None:
+            self.show_box(boxes, plt.gca())
+
         self.save_plot(title, suffix)
-    
+
 
 def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', output_dir: str = "output") -> None:
     """Run interactive segmentation demonstration with reduced redundancy."""
@@ -262,17 +257,16 @@ def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', 
 
     # Initialize demo components
     demo = MedicalImageSegmentationDemo()
-    vis_utils = VisualizationUtils()
-    runner = DemoRunner(demo, vis_utils, output_path, filename_stem)
+    vis_utils = VisualizationUtils(output_path, filename_stem)
 
     # Load and display original image
     image = demo.load_image(image_path)
     plt.figure()
     plt.imshow(image)
-    runner.save_plot("Original Image", "original")
+    vis_utils.save_plot("Original Image", "original")
     print(f"Image shape: {image.shape}")
 
-    # Define example configurations
+    # Point segmentation
     examples = [
         {
             'name': 'Single click segmentation',
@@ -296,11 +290,11 @@ def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', 
             multimask_output=False
         )
         print(f"Predicted category: {category_pred}")
-        runner.visualize_result(image, masks, example['points'], example['labels'],
-            f"{example['name']} Result", "segmentation")
+        vis_utils.visualize_result(image, masks, example['labels'], points=example['points'], 
+            title=f"{example['name']} Result", suffix="segmentation")
     
-    # Example 3: Multi-step refinement
-    print(f"\n=== Example 3: Multiple click correction ===")
+    # Multi-step refinement segmentation
+    print(f"\n=== Multiple click correction ===")
     
     # Initial prediction
     initial_point = np.array([[378, 258]])
@@ -314,8 +308,8 @@ def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', 
         multimask_output=False
     )
     print(f"Predicted category: {category_pred}")
-    runner.visualize_result(image, masks, initial_point, initial_label,
-        "Initial Prediction", "segmentation")
+    vis_utils.visualize_result(image, masks, initial_label, points=initial_point,
+        title="Initial Prediction", suffix="segmentation")
 
     # Refinement prediction using previous logits
     refined_point = np.array([[311, 287]])
@@ -329,10 +323,25 @@ def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', 
         multimask_output=False
     )
     print(f"Predicted category: {category_pred}")
-    runner.visualize_result(image, masks, refined_point, refined_label,
-        "Refined Prediction", "segmentation")
+    vis_utils.visualize_result(image, masks, refined_label, points=refined_point,
+        title="Refined Prediction", suffix="segmentation")
 
+    # Bounding box segmentation
+    bounding_box = np.array([215, 118, 304, 232])
 
+    masks, logits, category_pred = demo.predict(
+        point_coords=None,
+        point_labels=None,
+        mask_input=None,
+        bounding_box=bounding_box,
+        text_prompt = None,
+        multimask_output=False,
+    )
+
+    print(f"Predicted category: {category_pred}")
+    vis_utils.visualize_result(image, masks, refined_label, boxes=bounding_box,
+        title="Bounding box Prediction", suffix="segmentation")
+    
 if __name__ == "__main__":
     # Run the interactive demonstration
     run_interactive_point_demo()
