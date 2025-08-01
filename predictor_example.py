@@ -120,7 +120,7 @@ show_mask(masks, plt.gca())
 show_points(input_point, input_label, plt.gca())
 plt.axis('off')
 plt.show()
-quit()
+
 
 # %%
 input_point = np.array([[346, 211]])
