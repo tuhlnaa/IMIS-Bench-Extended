@@ -1,4 +1,4 @@
-# medical_segmentation_demo.py
+# examples/medical_segmentation_demo.py
 
 import cv2
 import torch
@@ -9,7 +9,7 @@ from argparse import Namespace
 from datetime import datetime
 from pathlib import Path
 from PIL import Image
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List
 
 # Import custom modules
 from segment_anything import sam_model_registry
@@ -201,8 +201,81 @@ class VisualizationUtils:
         ))
 
 
+class DemoRunner:
+    """Helper class to manage demo execution and reduce code repetition."""
+    
+    def __init__(self, demo: MedicalImageSegmentationDemo, vis_utils: VisualizationUtils, 
+                 image: np.ndarray, output_path: Path, filename_stem: str):
+        self.demo = demo
+        self.vis_utils = vis_utils
+        self.image = image
+        self.output_path = output_path
+        self.filename_stem = filename_stem
+    
+    def _save_plot(self, title: str, suffix: str) -> None:
+        """Save current plot with timestamp."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        plt.title(title)
+        output_file = self.output_path / f'{self.filename_stem}_{suffix}_{timestamp}.png'
+        plt.savefig(output_file, dpi=200, bbox_inches='tight')
+        plt.close()
+    
+    def visualize_points_only(self, points: np.ndarray, labels: np.ndarray, 
+                            title: str, suffix: str) -> None:
+        """Create and save visualization with just points."""
+        plt.figure()
+        plt.imshow(self.image)
+        self.vis_utils.show_points(points, labels, plt.gca())
+        self._save_plot(title, suffix)
+    
+    def visualize_result(self, masks: np.ndarray, points: np.ndarray, 
+                        labels: np.ndarray, title: str, suffix: str) -> None:
+        """Create and save visualization with mask and points."""
+        plt.figure()
+        plt.imshow(self.image)
+        self.vis_utils.show_mask(masks, plt.gca())
+        self.vis_utils.show_points(points, labels, plt.gca())
+        self._save_plot(title, suffix)
+    
+    def run_prediction_example(self, points: np.ndarray, labels: np.ndarray, 
+                             example_name: str, mask_input: Optional[np.ndarray] = None,
+                             show_input_points: bool = True) -> Tuple[np.ndarray, np.ndarray, str]:
+        """
+        Run a complete prediction example with visualization.
+        
+        Returns:
+            Tuple of (masks, logits, category_pred) for potential chaining
+        """
+        print(f"\n=== {example_name} ===")
+        
+        # Show input points if requested
+        if show_input_points:
+            self.visualize_points_only(points, labels, "Input Points", "point")
+        
+        try:
+            # Perform prediction
+            masks, logits, category_pred = self.demo.predict_with_points(
+                point_coords=points,
+                point_labels=labels,
+                mask_input=mask_input,
+                multimask_output=False
+            )
+            
+            print(f"Predicted category: {category_pred}")
+            
+            # Visualize result
+            self.visualize_result(masks, points, labels, 
+                                f"{example_name} Result", "segmentation")
+            
+            return masks, logits, category_pred
+            
+        except Exception as e:
+            print(f"Error in prediction: {e}")
+            return None, None, None
+
+
 def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png', output_dir: str = "output") -> None:
-    """Run interactive segmentation demonstration."""
+    """Run interactive segmentation demonstration with reduced redundancy."""
     image_path = Path(image_path)
     output_path = Path(output_dir)
 
@@ -210,139 +283,73 @@ def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png', output
     output_path.mkdir(parents=True, exist_ok=True)
     filename_stem = image_path.stem
 
-    # Initialize demo
+    # Initialize demo components
     demo = MedicalImageSegmentationDemo()
     vis_utils = VisualizationUtils()
 
-    # Load and display image
+    # Load and display original image
     try:
         image = demo.load_image(image_path)
         print(f"Image shape: {image.shape}")
         
-        # Display original image
+        # Save original image
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        plt.figure()  # figsize=(10, 10)
+        plt.figure()
         plt.imshow(image)
         plt.title("Original Image")
         output_file = output_path / f'{filename_stem}_original_{timestamp}.png'
         plt.savefig(output_file, dpi=200, bbox_inches='tight')
+        plt.close()
 
     except Exception as e:
         print(f"Error loading image: {e}")
         return
     
-    # Example 1: Single click segmentation (kidney)
-    print("\n=== Example 1: Single click segmentation ===")
-    input_point = np.array([[188, 205]])
-    input_label = np.array([1])
+    # Initialize demo runner
+    runner = DemoRunner(demo, vis_utils, image, output_path, filename_stem)
     
-    # Show input points
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    plt.figure()
-    plt.imshow(image)
-    vis_utils.show_points(input_point, input_label, plt.gca())
-    plt.title("Input Points")
-    output_file = output_path / f'{filename_stem}_point_{timestamp}.png'
-    plt.savefig(output_file, dpi=200, bbox_inches='tight')
-    plt.close()
+    # Define example configurations
+    examples = [
+        {
+            'name': 'Single click segmentation',
+            'points': np.array([[188, 205]]),
+            'labels': np.array([1]),
+        },
+        {
+            'name': 'Different region segmentation',
+            'points': np.array([[346, 211]]),
+            'labels': np.array([1]),
+        }
+    ]
     
-    # Predict and display result
-    try:
-        masks, logits, category_pred = demo.predict_with_points(
-            point_coords=input_point,
-            point_labels=input_label,
-            multimask_output=False
+    # Run simple examples
+    results = []
+    for example in examples:
+        masks, logits, category_pred = runner.run_prediction_example(
+            example['points'], example['labels'], example['name']
         )
-        
-        print(f"Predicted category: {category_pred}")
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        plt.figure()
-        plt.imshow(image)
-        vis_utils.show_mask(masks, plt.gca())
-        vis_utils.show_points(input_point, input_label, plt.gca())
-        plt.title("Segmentation Result")
-        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
-        plt.savefig(output_file, dpi=200, bbox_inches='tight')
-        
-    except Exception as e:
-        print(f"Error in prediction: {e}")
+        results.append((masks, logits, category_pred))
     
-    # Example 2: Different region
-    print("\n=== Example 2: Different region segmentation ===")
-    input_point = np.array([[346, 211]])
-    input_label = np.array([1])
+    # Example 3: Multi-step refinement
+    print(f"\n=== Example 3: Multiple click correction ===")
     
-    try:
-        masks, logits, category_pred = demo.predict_with_points(
-            point_coords=input_point,
-            point_labels=input_label,
-            multimask_output=False
+    # Initial prediction
+    initial_point = np.array([[378, 258]])
+    initial_label = np.array([1])
+    
+    masks, logits, category_pred = runner.run_prediction_example(
+        initial_point, initial_label, "Initial Prediction", show_input_points=False
+    )
+    
+    if logits is not None:
+        # Refinement prediction using previous logits
+        refined_point = np.array([[311, 287]])
+        refined_label = np.array([1])
+        
+        runner.run_prediction_example(
+            refined_point, refined_label, "Refined Prediction", 
+            mask_input=logits, show_input_points=False
         )
-        
-        print(f"Predicted category: {category_pred}")
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        plt.figure()
-        plt.imshow(image)
-        vis_utils.show_mask(masks, plt.gca())
-        vis_utils.show_points(input_point, input_label, plt.gca())
-        plt.title("Second Region Segmentation")
-        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
-        plt.savefig(output_file, dpi=200, bbox_inches='tight')
-        
-    except Exception as e:
-        print(f"Error in prediction: {e}")
-    
-    # Example 3: Multiple click correction
-    print("\n=== Example 3: Multiple click correction ===")
-    
-    # Initial click
-    input_point = np.array([[378, 258]])
-    input_label = np.array([1])
-    
-    try:
-        masks, logits, category_pred = demo.predict_with_points(
-            point_coords=input_point,
-            point_labels=input_label,
-            multimask_output=False
-        )
-        
-        print(f"Initial prediction category: {category_pred}")
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        plt.figure()
-        plt.imshow(image)
-        vis_utils.show_mask(masks, plt.gca())
-        vis_utils.show_points(input_point, input_label, plt.gca())
-        plt.title("Initial Prediction")
-        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
-        plt.savefig(output_file, dpi=200, bbox_inches='tight')
-        
-        # Refinement click
-        input_point_refined = np.array([[311, 287]])
-        input_label_refined = np.array([1])
-        
-        masks_refined, logits_refined, category_pred_refined = demo.predict_with_points(
-            point_coords=input_point_refined,
-            point_labels=input_label_refined,
-            mask_input=logits,  # Use previous logits for refinement
-            multimask_output=False
-        )
-        
-        print(f"Refined prediction category: {category_pred_refined}")
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        plt.figure()
-        plt.imshow(image)
-        vis_utils.show_mask(masks_refined, plt.gca())
-        vis_utils.show_points(input_point_refined, input_label_refined, plt.gca())
-        plt.title("Refined Prediction")
-        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
-        plt.savefig(output_file, dpi=200, bbox_inches='tight')
-        
-    except Exception as e:
-        print(f"Error in multi-click prediction: {e}")
 
 
 if __name__ == "__main__":
