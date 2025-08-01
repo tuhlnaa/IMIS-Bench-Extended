@@ -1,31 +1,17 @@
-# 001.py
-"""
-Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline
-
-Interactive Medical Image Segmentation (IMIS) has long been constrained by the limited 
-availability of large-scale, diverse, and densely annotated datasets, which hinders model 
-generalization and consistent evaluation across different models. This module demonstrates 
-the IMed-361M benchmark dataset and provides a baseline network for interactive segmentation.
-
-The IMed-361M dataset spans 14 modalities and 204 segmentation targets, totaling 361 million 
-masks—an average of 56 masks per image.
-"""
-
-import warnings
-from argparse import Namespace
-from pathlib import Path
-from typing import Optional, Tuple, Union
+# medical_segmentation_demo.py
 
 import cv2
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
+import numpy as np
+import matplotlib.pyplot as plt
+
+from argparse import Namespace
+from datetime import datetime
+from pathlib import Path
 from PIL import Image
+from typing import Optional, Tuple, Union
 
-# Suppress flash attention warning
-warnings.filterwarnings("ignore", message="1Torch was not compiled with flash attention.")
-
-# Import custom modules (assuming they exist in the project)
+# Import custom modules
 from segment_anything import sam_model_registry
 from segment_anything.predictor import IMISPredictor
 from model import IMISNet
@@ -66,6 +52,7 @@ class MedicalImageSegmentationDemo:
         # Load model
         self._load_model(category_weights)
         
+
     def _load_model(self, category_weights: str) -> None:
         """Load the SAM model and IMISNet."""
         try:
@@ -82,16 +69,9 @@ class MedicalImageSegmentationDemo:
         except Exception as e:
             raise RuntimeError(f"Failed to load model: {e}")
     
+
     def load_image(self, image_path: Union[str, Path]) -> np.ndarray:
-        """
-        Load and preprocess image for segmentation.
-        
-        Args:
-            image_path: Path to the input image
-            
-        Returns:
-            Preprocessed image as numpy array
-        """
+        """Load and preprocess image for segmentation."""
         try:
             image = Image.open(image_path).convert('RGB')
             image_array = np.array(image)
@@ -104,6 +84,7 @@ class MedicalImageSegmentationDemo:
         except Exception as e:
             raise RuntimeError(f"Failed to load image {image_path}: {e}")
     
+
     def predict_with_points(
         self,
         point_coords: np.ndarray,
@@ -173,7 +154,7 @@ class VisualizationUtils:
         coords: np.ndarray, 
         labels: np.ndarray, 
         ax: plt.Axes, 
-        marker_size: int = 375
+        marker_size: int = 96
     ) -> None:
         """
         Display interaction points on matplotlib axes.
@@ -190,14 +171,14 @@ class VisualizationUtils:
         if len(positive_points) > 0:
             ax.scatter(
                 positive_points[:, 0], positive_points[:, 1], 
-                color='green', marker='*', s=marker_size, 
+                color='green', marker='P', s=marker_size, 
                 edgecolor='white', linewidth=1.25
             )
             
         if len(negative_points) > 0:
             ax.scatter(
                 negative_points[:, 0], negative_points[:, 1], 
-                color='red', marker='*', s=marker_size, 
+                color='red', marker='P', s=marker_size, 
                 edgecolor='white', linewidth=1.25
             )
     
@@ -220,29 +201,32 @@ class VisualizationUtils:
         ))
 
 
-def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png') -> None:
-    """
-    Run interactive segmentation demonstration.
-    
-    Args:
-        image_path: Path to demonstration image
-    """
+def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png', output_dir: str = "output") -> None:
+    """Run interactive segmentation demonstration."""
+    image_path = Path(image_path)
+    output_path = Path(output_dir)
+
+    # Create output directory if it doesn't exist
+    output_path.mkdir(parents=True, exist_ok=True)
+    filename_stem = image_path.stem
+
     # Initialize demo
     demo = MedicalImageSegmentationDemo()
     vis_utils = VisualizationUtils()
-    
+
     # Load and display image
     try:
         image = demo.load_image(image_path)
         print(f"Image shape: {image.shape}")
         
         # Display original image
-        plt.figure(figsize=(10, 10))
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        plt.figure()  # figsize=(10, 10)
         plt.imshow(image)
         plt.title("Original Image")
-        plt.axis('on')
-        plt.show()
-        
+        output_file = output_path / f'{filename_stem}_original_{timestamp}.png'
+        plt.savefig(output_file, dpi=200, bbox_inches='tight')
+
     except Exception as e:
         print(f"Error loading image: {e}")
         return
@@ -253,12 +237,14 @@ def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png') -> Non
     input_label = np.array([1])
     
     # Show input points
-    plt.figure(figsize=(10, 10))
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    plt.figure()
     plt.imshow(image)
     vis_utils.show_points(input_point, input_label, plt.gca())
     plt.title("Input Points")
-    plt.axis('on')
-    plt.show()
+    output_file = output_path / f'{filename_stem}_point_{timestamp}.png'
+    plt.savefig(output_file, dpi=200, bbox_inches='tight')
+    plt.close()
     
     # Predict and display result
     try:
@@ -269,14 +255,15 @@ def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png') -> Non
         )
         
         print(f"Predicted category: {category_pred}")
-        
-        plt.figure(figsize=(10, 10))
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        plt.figure()
         plt.imshow(image)
         vis_utils.show_mask(masks, plt.gca())
         vis_utils.show_points(input_point, input_label, plt.gca())
         plt.title("Segmentation Result")
-        plt.axis('off')
-        plt.show()
+        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
+        plt.savefig(output_file, dpi=200, bbox_inches='tight')
         
     except Exception as e:
         print(f"Error in prediction: {e}")
@@ -294,14 +281,15 @@ def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png') -> Non
         )
         
         print(f"Predicted category: {category_pred}")
-        
-        plt.figure(figsize=(10, 10))
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        plt.figure()
         plt.imshow(image)
         vis_utils.show_mask(masks, plt.gca())
         vis_utils.show_points(input_point, input_label, plt.gca())
         plt.title("Second Region Segmentation")
-        plt.axis('off')
-        plt.show()
+        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
+        plt.savefig(output_file, dpi=200, bbox_inches='tight')
         
     except Exception as e:
         print(f"Error in prediction: {e}")
@@ -322,13 +310,14 @@ def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png') -> Non
         
         print(f"Initial prediction category: {category_pred}")
         
-        plt.figure(figsize=(10, 10))
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        plt.figure()
         plt.imshow(image)
         vis_utils.show_mask(masks, plt.gca())
         vis_utils.show_points(input_point, input_label, plt.gca())
         plt.title("Initial Prediction")
-        plt.axis('off')
-        plt.show()
+        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
+        plt.savefig(output_file, dpi=200, bbox_inches='tight')
         
         # Refinement click
         input_point_refined = np.array([[311, 287]])
@@ -342,14 +331,15 @@ def run_interactive_demo(image_path: str = 'demo_image/train_177_51.png') -> Non
         )
         
         print(f"Refined prediction category: {category_pred_refined}")
-        
-        plt.figure(figsize=(10, 10))
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        plt.figure()
         plt.imshow(image)
         vis_utils.show_mask(masks_refined, plt.gca())
         vis_utils.show_points(input_point_refined, input_label_refined, plt.gca())
         plt.title("Refined Prediction")
-        plt.axis('off')
-        plt.show()
+        output_file = output_path / f'{filename_stem}_segmentation_{timestamp}.png'
+        plt.savefig(output_file, dpi=200, bbox_inches='tight')
         
     except Exception as e:
         print(f"Error in multi-click prediction: {e}")
