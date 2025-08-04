@@ -1,0 +1,6 @@
+# Usage: pip install -r requirements.txt
+
+gradio==3.38.0
+ffmpeg-python>=0.2.0
+moviepy>=2.2.1
+hydra-core>=1.3.2
