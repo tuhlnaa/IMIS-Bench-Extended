@@ -10,11 +10,11 @@ sys.path.append(str(PROJECT_ROOT))
 
 from src.models.segmentation import MedicalImageSegmentation
 from src.utils.visualization import VisualizationUtils
-from src.utils.inference import run_segmentation
+from src.utils.inference import run_segmentation, run_workflow_chain
 
 
 def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', output_dir: str = "output") -> None:
-    """Run interactive segmentation demonstration with reduced redundancy."""
+    """Run interactive segmentation demonstration with declarative multi-step workflows."""
     image_path = Path(image_path)
     output_path = Path(output_dir)
 
@@ -33,8 +33,9 @@ def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', 
     vis_utils.save_plot("Original Image", "original")
     print(f"Image shape: {image.shape}")
 
+    # All examples including multi-step workflows defined declaratively
     examples = [
-        # Point-based segmentation examples
+        # Single-step examples
         {
             'name': 'Single click segmentation',
             'points': np.array([[188, 205]]),
@@ -45,50 +46,83 @@ def run_interactive_point_demo(image_path: str = 'demo_image/train_177_51.png', 
             'points': np.array([[346, 211]]),
             'labels': np.array([1]),
         },
-        
-        # Bounding box segmentation examples
         {
             'name': 'Bounding box segmentation',
             'bounding_box': np.array([215, 118, 304, 232]),
         },
-        
-        # Text prompt segmentation examples
         {
             'name': 'Text prompt - kidney right',
             'text_prompt': ['kidney_right'],
+        },
+        {
+            'name': 'Text prompt - kidney left',
+            'text_prompt': ['kidney_left'],
+        },
+        {
+            'name': 'Text prompt - liver',
+            'text_prompt': ['liver'],
+        },
+        {
+            'name': 'Multiple text prompts - both kidneys',
+            'text_prompt': ['kidney_right', 'kidney_left']
+        },
+
+        # Multi-step workflows defined declaratively
+        {
+            'name': 'Point-based refinement workflow',
+            'workflow_type': 'multistep',
+            'steps': [
+                {
+                    'name': 'Point Initial Prediction (liver)',
+                    'points': np.array([[378, 258]]),
+                    'labels': np.array([1])
+                },
+                {
+                    'name': 'Point Refined Prediction (liver)',
+                    'points': np.array([[311, 287]]),
+                    'labels': np.array([1]),
+                    'use_previous_logits': True
+                }
+            ]
+        },
+        {
+            'name': 'Text-to-point refinement workflow',
+            'workflow_type': 'multistep',
+            'steps': [
+                {
+                    'name': 'Prompt Initial Prediction (liver)',
+                    'text_prompt': ['liver']
+                },
+                {
+                    'name': 'Point Refined Prediction (liver)',
+                    'points': np.array([[311, 287]]),
+                    'labels': np.array([1]),
+                    'use_previous_logits': True
+                }
+            ]
         }
     ]
-    
-    # Run all basic examples
+
+    # Process all examples using unified logic
     results = {}
     for example in examples:
-        masks, logits, category_pred = run_segmentation(demo, vis_utils, image, example)
-        results[example['name']] = {
-            'masks': masks,
-            'logits': logits,
-            'category_pred': category_pred
-        }
-    
-    # Multi-step refinement segmentation workflow
-    print(f"\n=== Multi-step Refinement Workflow ===")
-    
-    # Step 1: Initial prediction
-    initial_example = {
-        'name': 'Initial Prediction',
-        'points': np.array([[378, 258]]),
-        'labels': np.array([1]),
-    }
-    initial_masks, initial_logits, initial_category = run_segmentation(demo, vis_utils, image, initial_example)
-    
-    # Step 2: Refinement using previous logits
-    refined_example = {
-        'name': 'Refined Prediction (using previous logits)',
-        'points': np.array([[311, 287]]),
-        'labels': np.array([1]),
-        'mask_input': initial_logits,
-    }
-    refined_masks, refined_logits, refined_category = run_segmentation(demo, vis_utils, image, refined_example)
-    
+        if example.get('workflow_type') == 'multistep':
+            # Handle multi-step workflow
+            masks, logits, category_pred = run_workflow_chain(demo, vis_utils, image, example['steps'])
+            results[example['name']] = {
+                'masks': masks,
+                'logits': logits,
+                'category_pred': category_pred
+            }
+        else:
+            # Handle single-step example
+            masks, logits, category_pred = run_segmentation(demo, vis_utils, image, example)
+            results[example['name']] = {
+                'masks': masks,
+                'logits': logits,
+                'category_pred': category_pred
+            }
+
     print(f"\nSegmentation demonstration completed. Results saved to {output_path}")
     return results
 

@@ -11,33 +11,40 @@ class VisualizationUtils:
     def __init__(self, output_path: Path, filename_stem: str):
         self.output_path = output_path
         self.filename_stem = filename_stem
-    
 
+        
     @staticmethod
     def show_mask(
-            mask: np.ndarray, 
-            ax: plt.Axes, 
+            mask: np.ndarray,
+            ax: plt.Axes,
             random_color: bool = False,
             alpha: float = 0.6
         ) -> None:
         """
         Display segmentation mask on matplotlib axes.
-        
+    
         Args:
-            mask: Binary mask to display
+            mask: Binary mask (H, W) or (1, H, W) or (N, 1, H, W) to display
             ax: Matplotlib axes object
             random_color: Whether to use random color
             alpha: Transparency level
         """
+        # Handle multiple masks by combining them (logical OR)
+        if mask.ndim == 4:
+            mask = np.any(mask, axis=0)
+        
+        if mask.ndim == 3 and mask.shape[0] == 1:
+            mask = mask[0]
+        
         if random_color:
             color = np.concatenate([np.random.random(3), np.array([alpha])], axis=0)
         else:
             color = np.array([30/255, 144/255, 255/255, alpha])
-            
+        
         height, width = mask.shape[-2:]
         mask_image = mask.reshape(height, width, 1) * color.reshape(1, 1, -1)
         ax.imshow(mask_image)
-    
+
 
     @staticmethod
     def show_points(
