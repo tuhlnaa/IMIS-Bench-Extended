@@ -1,5 +1,8 @@
 # src/utils/inference.py
 import numpy as np
+
+from pathlib import Path
+from matplotlib import pyplot as plt
 from typing import Dict, Any, List, Tuple, Union
 
 from src.models.segmentation import MedicalImageSegmentation
@@ -140,3 +143,51 @@ def run_workflow_chain(
         previous_logits = logits
     
     return masks, logits, category_pred
+
+
+def run_interactive_demo(
+        image_path: str,
+        examples: List[Dict[str, Any]],
+        output_dir: str = "output",
+    ) -> Dict[str, Dict[str, Any]]:
+    """Run interactive segmentation demonstration with declarative multi-step workflows."""
+    image_path = Path(image_path)
+    output_path = Path(output_dir)
+
+    # Create output directory if it doesn't exist
+    output_path.mkdir(parents=True, exist_ok=True)
+    filename_stem = image_path.stem
+
+    # Initialize demo components
+    demo = MedicalImageSegmentation()
+    vis_utils = VisualizationUtils(output_path, filename_stem)
+
+    # Load and display original image
+    image = demo.load_image(image_path)
+    plt.figure()
+    plt.imshow(image)
+    vis_utils.save_plot("Original Image", "original")
+    print(f"Image shape: {image.shape}")
+
+    # Process all examples using unified logic
+    results = {}
+    for example in examples:
+        if example.get('workflow_type') == 'multistep':
+            # Handle multi-step workflow
+            masks, logits, category_pred = run_workflow_chain(demo, vis_utils, image, example['steps'])
+            results[example['name']] = {
+                'masks': masks,
+                'logits': logits,
+                'category_pred': category_pred
+            }
+        else:
+            # Handle single-step example
+            masks, logits, category_pred = run_segmentation(demo, vis_utils, image, example)
+            results[example['name']] = {
+                'masks': masks,
+                'logits': logits,
+                'category_pred': category_pred
+            }
+
+    print(f"\nSegmentation demonstration completed. Results saved to {output_path}")
+    return results

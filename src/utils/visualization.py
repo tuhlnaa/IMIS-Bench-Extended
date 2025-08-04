@@ -12,38 +12,42 @@ class VisualizationUtils:
         self.output_path = output_path
         self.filename_stem = filename_stem
 
-        
+
     @staticmethod
     def show_mask(
             mask: np.ndarray,
             ax: plt.Axes,
-            random_color: bool = False,
+            colormap: str = 'tab20',
             alpha: float = 0.6
         ) -> None:
         """
-        Display segmentation mask on matplotlib axes.
-    
+        Display segmentation mask using matplotlib colormap.
+        
         Args:
-            mask: Binary mask (H, W) or (1, H, W) or (N, 1, H, W) to display
+            mask: Binary mask (N, 1, H, W) to display
             ax: Matplotlib axes object
-            random_color: Whether to use random color
+            colormap: Matplotlib colormap name
             alpha: Transparency level
         """
-        # Handle multiple masks by combining them (logical OR)
-        if mask.ndim == 4:
-            mask = np.any(mask, axis=0)
+        if mask.ndim != 4:
+            raise ValueError("This function expects 4D input (N, 1, H, W)")
         
-        if mask.ndim == 3 and mask.shape[0] == 1:
-            mask = mask[0]
+        N, _, H, W = mask.shape
+        cmap = plt.cm.get_cmap(colormap)
         
-        if random_color:
-            color = np.concatenate([np.random.random(3), np.array([alpha])], axis=0)
-        else:
-            color = np.array([30/255, 144/255, 255/255, alpha])
+        # Create instance mask (each pixel gets the index of the first mask that covers it)
+        instance_mask = np.zeros((H, W), dtype=int)
         
-        height, width = mask.shape[-2:]
-        mask_image = mask.reshape(height, width, 1) * color.reshape(1, 1, -1)
-        ax.imshow(mask_image)
+        for i in range(N):
+            if np.any(mask[i, 0]):
+                # Assign class index (i+1) to avoid confusion with background (0)
+                instance_mask = np.where(mask[i, 0] > 0, i + 1, instance_mask)
+        
+        # Apply colormap
+        colored_mask = cmap(instance_mask / N)
+        colored_mask[:, :, 3] = np.where(instance_mask > 0, alpha, 0)  # Set alpha
+        
+        ax.imshow(colored_mask)
 
 
     @staticmethod
@@ -78,26 +82,36 @@ class VisualizationUtils:
                 color='red', marker='P', s=marker_size, 
                 edgecolor='white', linewidth=1.25
             )
-    
 
+        
     @staticmethod
     def show_box(box: np.ndarray, ax: plt.Axes) -> None:
         """
-        Display bounding box on matplotlib axes.
-        
+        Display bounding box(es) on matplotlib axes.
+    
         Args:
-            box: Bounding box coordinates [x0, y0, x1, y1]
+            box: Bounding box coordinates. Can be:
+                - Single box: [x0, y0, x1, y1] with shape (4,)
+                - Multiple boxes: [[x0, y0, x1, y1], ...] with shape (N, 4)
             ax: Matplotlib axes object
         """
-        x0, y0 = box[0], box[1]
-        width, height = box[2] - box[0], box[3] - box[1]
+        # Ensure box is 2D for consistent processing
+        if box.ndim == 1:
+            boxes = box.reshape(1, -1)  # (4,) -> (1, 4)
+        else:
+            boxes = box  # (N, 4)
         
-        ax.add_patch(plt.Rectangle(
-            (x0, y0), width, height, 
-            edgecolor='green', facecolor=(0, 0, 0, 0), 
-            linewidth=2
-        ))
-    
+        # Draw each bounding box
+        for i, single_box in enumerate(boxes):
+            x0, y0, x1, y1 = single_box
+            width, height = x1 - x0, y1 - y0
+            
+            ax.add_patch(plt.Rectangle(
+                (x0, y0), width, height,
+                edgecolor='green', facecolor=(0, 0, 0, 0),
+                linewidth=2
+            ))
+
 
     def save_plot(self, title: str, suffix: str) -> None:
         """Save current plot with timestamp."""
