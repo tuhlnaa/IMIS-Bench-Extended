@@ -9,7 +9,7 @@
 
 ## Abstract
 
-[![Homepage](https://img.shields.io/badge/GitHub-Homepage-B31B1B?logo=github)](https://arxiv.org/abs/2411.12814)
+[![Homepage](https://img.shields.io/badge/GitHub-Homepage-181717?logo=github)](https://uni-medical.github.io/IMIS-Benchmark)
 [![arXiv](https://img.shields.io/badge/arXiv-2411.12814-B31B1B?logo=arxiv)](https://arxiv.org/abs/2411.12814)
 
 This repository hosts the code and resources for the paper **"Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline"**.
