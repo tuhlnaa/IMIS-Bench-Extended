@@ -5,6 +5,8 @@ from pathlib import Path
 from matplotlib import pyplot as plt
 from typing import Dict, Any, List, Tuple, Union
 
+from omegaconf import OmegaConf
+
 from src.models.segmentation import MedicalImageSegmentation
 from src.utils.visualization import VisualizationUtils
 
@@ -146,11 +148,13 @@ def run_workflow_chain(
 
 
 def run_interactive_demo(
+        config: OmegaConf,
         image_path: str,
         examples: List[Dict[str, Any]],
         output_dir: str = "output",
     ) -> Dict[str, Dict[str, Any]]:
     """Run interactive segmentation demonstration with declarative multi-step workflows."""
+
     image_path = Path(image_path)
     output_path = Path(output_dir)
 
@@ -159,15 +163,15 @@ def run_interactive_demo(
     filename_stem = image_path.stem
 
     # Initialize demo components
-    demo = MedicalImageSegmentation()
+    demo = MedicalImageSegmentation(config)
     vis_utils = VisualizationUtils(output_path, filename_stem)
 
     # Load and display original image
     image = demo.load_image(image_path)
+
     plt.figure()
     plt.imshow(image)
     vis_utils.save_plot("Original Image", "original")
-    print(f"Image shape: {image.shape}")
 
     # Process all examples using unified logic
     results = {}

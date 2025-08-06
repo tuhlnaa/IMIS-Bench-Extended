@@ -7,10 +7,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
+from configs.config import parse_args
 from src.utils.inference import run_interactive_demo
 
 
 def main():
+    # Initialize configuration
+    config = parse_args()
+
     examples = [
         # Single-step examples
         {
@@ -80,7 +84,7 @@ def main():
         }
     ]
 
-    results = run_interactive_demo("demo_image/train_177_51.png", examples)
+    results = run_interactive_demo(config, "data/samples/train_177_51.png", examples)
     
     # Print summary of results
     print(f"\n=== Summary ===")
@@ -95,10 +99,8 @@ def main():
         }
     ]
 
-    results = run_interactive_demo("demo_image/ABD_001_67.png", examples)
+    results = run_interactive_demo(config, "data/samples/ABD_001_67.png", examples)
     
-
-
     examples = [
         {
             'name': 'Single click segmentation',
@@ -111,7 +113,7 @@ def main():
         }     
     ]
 
-    results = run_interactive_demo("demo_image/lung_005_160.png", examples)
+    results = run_interactive_demo(config, "data/samples/lung_005_160.png", examples)
 
     examples = [
         {
@@ -120,7 +122,7 @@ def main():
             'labels': np.array([1]),
         }
     ]
-    results = run_interactive_demo("demo_image/ISIC_0012092.jpg", examples)
+    results = run_interactive_demo(config, "data/samples/ISIC_0012092.jpg", examples)
 
 
 if __name__ == "__main__":

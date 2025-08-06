@@ -1,0 +1,18 @@
+# config/segmentation_config.yaml
+
+checkpoint_path: 'output/checkpoint/IMISNet-B.pth'
+category_weights_path: 'dataloaders/categories_weight.pkl'
+
+# Device configuration - leave null for auto-detection
+device: null  # or 'cuda', 'cpu'
+
+# Model configuration
+model:
+  image_size: 1024
+  sam_model_type: 'vit_b'  # Could be 'vit_b', 'vit_l', 'vit_h'
+  test_mode: true
+
+# Prediction configuration
+prediction:
+  multimask_output: false
+
