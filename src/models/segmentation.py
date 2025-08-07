@@ -9,9 +9,25 @@ from typing import Optional, Tuple, Union
 from omegaconf import OmegaConf
 
 # Import custom modules
-from segment_anything import sam_model_registry
+from segment_anything.build_sam import get_sam_model
 from segment_anything.predictor import IMISPredictor
 from model import IMISNet
+
+
+def determine_device(config_device: Optional[str] = None) -> torch.device:
+    """
+    Determine the appropriate PyTorch device based on configuration and hardware availability.
+    """
+    if config_device:
+        # Use the explicitly configured device
+        return torch.device(config_device)
+    
+    # Auto-detect: prefer CUDA if available, otherwise use CPU
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    else:
+        return torch.device("cpu")
+
 
 class MedicalImageSegmentation:
     """
@@ -22,23 +38,17 @@ class MedicalImageSegmentation:
     """
     
     def __init__(self, config: OmegaConf):
-        """
-        Initialize the segmentation demo.
-        
-        Args:
-            config: OmegaConf configuration object containing all parameters
-        """
+        """Initialize the segmentation demo."""
         self.config = config
-        self.device = torch.device(
-            config.device if config.device else 
-            ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        self.device = determine_device(config.device)
         
         # Initialize model arguments from config
         self.args = Namespace()
         self.args.image_size = config.model.image_size
         self.args.sam_checkpoint = config.checkpoint_path
-        
+        print(self.config)
+        print()
+        print(self.args)
         # Load model
         self._load_model()
         
@@ -46,7 +56,7 @@ class MedicalImageSegmentation:
     def _load_model(self) -> None:
         """Load the SAM model and IMISNet."""
         try:
-            sam = sam_model_registry[self.config.model.sam_model_type](self.args).to(self.device)
+            sam = get_sam_model(self.config.model.sam_model_type, self.args).to(self.device)
             self.imis_net = IMISNet(
                 sam, 
                 test_mode=self.config.model.test_mode, 
