@@ -2,9 +2,9 @@
 import torch
 import numpy as np
 
-from argparse import Namespace
 from pathlib import Path
 from PIL import Image
+from rich import print
 from typing import Optional, Tuple, Union
 from omegaconf import OmegaConf
 
@@ -14,19 +14,33 @@ from segment_anything.predictor import IMISPredictor
 from model import IMISNet
 
 
-def determine_device(config_device: Optional[str] = None) -> torch.device:
+def determine_device(config_device: Optional[str] = None, verbose: bool = True) -> torch.device:
     """
     Determine the appropriate PyTorch device based on configuration and hardware availability.
     """
+    # Determine device
     if config_device:
-        # Use the explicitly configured device
-        return torch.device(config_device)
-    
-    # Auto-detect: prefer CUDA if available, otherwise use CPU
-    if torch.cuda.is_available():
-        return torch.device("cuda")
+        device = torch.device(config_device)
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
     else:
-        return torch.device("cpu")
+        device = torch.device("cpu")
+
+    if verbose and torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        print(f"[bold blue]GPU: {gpu_name}[/bold blue]")
+        
+        # Check compute capability
+        major, minor = torch.cuda.get_device_capability(0)
+        print(f"[bold blue]Compute capability: {major}.{minor}[/bold blue]")
+        
+        # FlashAttention V2 needs compute capability >= 8.0 (Ampere+)
+        if major >= 8:
+            print("[green]✅ Compatible with FlashAttention V2[/green]")
+        else:
+            print("[red]❌ Not compatible with FlashAttention V2[/red]")
+    
+    return device
 
 
 class MedicalImageSegmentation:
@@ -41,22 +55,13 @@ class MedicalImageSegmentation:
         """Initialize the segmentation demo."""
         self.config = config
         self.device = determine_device(config.device)
-        
-        # Initialize model arguments from config
-        self.args = Namespace()
-        self.args.image_size = config.model.image_size
-        self.args.sam_checkpoint = config.checkpoint_path
-        print(self.config)
-        print()
-        print(self.args)
-        # Load model
         self._load_model()
         
 
     def _load_model(self) -> None:
         """Load the SAM model and IMISNet."""
         try:
-            sam = get_sam_model(self.config.model.sam_model_type, self.args).to(self.device)
+            sam = get_sam_model(self.config.model.sam_model_type, self.config).to(self.device)
             self.imis_net = IMISNet(
                 sam, 
                 test_mode=self.config.model.test_mode, 

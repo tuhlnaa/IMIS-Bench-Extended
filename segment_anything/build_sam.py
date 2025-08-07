@@ -1,9 +1,10 @@
 import torch
-from functools import partial
-from typing import Dict, Any, Optional
-from .modeling import ViT, MaskDecoder, PromptEncoder, Sam, TwoWayTransformer
+
+from typing import Optional
 from transformers import AutoTokenizer, CLIPTextModel, CLIPTextConfig
-from torch.nn import functional as F
+from omegaconf import OmegaConf
+
+from .modeling import ViT, MaskDecoder, PromptEncoder, Sam, TwoWayTransformer
 
 
 # Model configuration constants
@@ -101,21 +102,10 @@ def build_sam(
     )
     
     if checkpoint is not None:
-        load_checkpoint(sam, checkpoint)
-    
+        state_dict = torch.load(checkpoint, map_location="cuda", weights_only=True)
+        sam.load_state_dict(state_dict)
+        print(f"Successfully loaded checkpoint: {checkpoint}")
     return sam
-
-
-def load_checkpoint(model: Sam, checkpoint_path: str) -> None:
-    """Load checkpoint with proper error handling."""
-    try:
-        state_dict = torch.load(checkpoint_path, map_location="cuda")
-        model.load_state_dict(state_dict)
-        print(f"Successfully loaded checkpoint: {checkpoint_path}")
-    except FileNotFoundError:
-        print(f"Warning: Checkpoint file not found: {checkpoint_path}")
-    except Exception as e:
-        print(f"Error loading checkpoint {checkpoint_path}: {str(e)}")
 
 
 def create_sam_builder(variant: str):
@@ -128,8 +118,8 @@ def create_sam_builder(variant: str):
             encoder_depth=config["encoder_depth"],
             encoder_num_heads=config["encoder_num_heads"],
             encoder_global_attn_indexes=config["encoder_global_attn_indexes"],
-            image_size=args.image_size,
-            checkpoint=args.sam_checkpoint,
+            image_size=args.model.image_size,
+            checkpoint=args.checkpoint_path,
             pretrain_model=config["pretrain_model"]
         )
     
@@ -150,7 +140,7 @@ sam_model_registry = {
 }
 
 
-def get_sam_model(variant: str = "default", args = None) -> Sam:
+def get_sam_model(variant: str = "default", config: OmegaConf = None) -> Sam:
     """
     Convenience function to get a SAM model by variant name.
     
@@ -168,4 +158,4 @@ def get_sam_model(variant: str = "default", args = None) -> Sam:
         available = list(sam_model_registry.keys())
         raise KeyError(f"Unknown variant '{variant}'. Available: {available}")
     
-    return sam_model_registry[variant](args)
+    return sam_model_registry[variant](config)
