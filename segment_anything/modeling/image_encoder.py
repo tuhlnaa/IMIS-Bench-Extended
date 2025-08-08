@@ -1,33 +1,10 @@
 
+# Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/image_encoder.py
 import timm
 import torch
 import torch.nn as nn
 
 from timm.layers import resample_abs_pos_embed_nhwc
-
-class LayerNorm2d(nn.Module):
-    """
-    Channel-wise LayerNorm for 2D feature maps (NCHW format).
-    Normalizes across spatial dimensions (H, W) for each channel separately.
-    
-    Args:
-        num_channels: Number of channels in the input tensor
-        eps: Small value to avoid division by zero
-    """
-    
-    def __init__(self, num_channels: int, eps: float = 1e-6) -> None:
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(num_channels))
-        self.bias = nn.Parameter(torch.zeros(num_channels))
-        self.eps = eps
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply channel-wise layer normalization."""
-        u = x.mean(dim=1, keepdim=True)
-        s = (x - u).pow(2).mean(dim=1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.eps)
-        x = self.weight[:, None, None] * x + self.bias[:, None, None]
-        return x
 
 
 class ViT(nn.Module):

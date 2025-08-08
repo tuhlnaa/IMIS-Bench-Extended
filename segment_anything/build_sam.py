@@ -1,3 +1,4 @@
+# Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/build_sam.py
 import torch
 
 from typing import Optional

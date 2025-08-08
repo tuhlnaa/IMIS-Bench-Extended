@@ -1,3 +1,4 @@
+# Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/mask_decoder.py
 import torch
 from torch import nn
 from torch.nn import functional as F

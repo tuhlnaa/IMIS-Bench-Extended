@@ -1,8 +1,9 @@
+# Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/modeling/prompt_encoder.py
 import torch
 import numpy as np
 
 from torch import nn
-from typing import Any, Optional, Tuple, Type
+from typing import Optional, Tuple, Type
 
 from .common import LayerNorm2d
 
