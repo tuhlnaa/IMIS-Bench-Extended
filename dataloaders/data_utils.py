@@ -1,12 +1,17 @@
 
-import numpy as np
 import torch
-from torch.nn import functional as F
-from torchvision.transforms.functional import resize, to_pil_image  # type: ignore
-from monai import data, transforms
-from torchvision.transforms.functional import resize
-from torchvision.transforms import InterpolationMode
+import numpy as np
+
+from monai import transforms
+from monai.utils import ensure_tuple
+from monai.config import KeysCollection
+
 from skimage.measure import label, regionprops
+from torch.nn import functional as F
+from torchvision.transforms import InterpolationMode
+from torchvision.transforms.functional import resize, to_pil_image  # type: ignore
+from typing import Dict, List, Tuple, Union, Any
+
 
 class Resize(transforms.Transform):
     def __init__(self, keys, target_size):
@@ -33,15 +38,35 @@ class Resize(transforms.Transform):
                 d[key] = d[key][np.newaxis, ...]
         return d
 
+
 class PermuteTransform(transforms.Transform):
-    def __init__(self, keys, dims):
+    """
+    Permute dimensions of arrays in dictionary data.
+    
+    Useful for converting between different dimension orderings
+    (e.g., channels-first to channels-last).
+    
+    Args:
+        keys: Keys of the data dictionary to be permuted
+        dims: New dimension ordering (e.g., (1, 2, 0) for HWC from CHW)
+    """
+    
+    def __init__(self, keys: KeysCollection, dims: Tuple[int, ...]):
+        self.keys = ensure_tuple(keys)
         self.dims = dims
-        self.keys = keys
-    def __call__(self, data):
+
+    def __call__(self, data: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        """Apply permute transformation to specified keys."""
         d = dict(data)
+        
         for key in self.keys:
-            d[key] = np.transpose(d[key], self.dims)
+            if key in d:
+                d[key] = np.transpose(d[key], self.dims)
+            else:
+                raise KeyError(f"Key '{key}' not found in data dictionary")
+                
         return d
+    
 
 class LongestSidePadding(transforms.Transform):
     def __init__(self, keys, input_size):
