@@ -147,6 +147,7 @@ class TextProcessor:
         if category_weights_path:
             self.load_category_weights(category_weights_path)
     
+    
     def load_category_weights(self, weights_path: str) -> None:
         """Load category weights and mappings from file."""
         with open(weights_path, "rb") as f:
@@ -156,6 +157,7 @@ class TextProcessor:
              self.index_to_category) = pickle.load(f)
             self.src_weights = torch.tensor(self.src_weights).to(self.device)
     
+
     def tokenize_text(
         self, 
         text: List[str], 
@@ -180,6 +182,7 @@ class TextProcessor:
         
         return text_embedding
     
+    
     def _normalize_text(self, text: str) -> str:
         """Normalize text for processing."""
         if self.categories_map and text in self.categories_map:
@@ -189,6 +192,7 @@ class TextProcessor:
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
     
+
     def get_category_labels(self, classes: List[str]) -> torch.Tensor:
         """Convert class names to category indices."""
         if not self.categories_map:
@@ -205,6 +209,7 @@ class TextProcessor:
         indices = [self.category_to_index[cat] for cat in norm_targets]
         return torch.tensor(indices).unsqueeze(-1).to(self.device)
     
+
     def compute_category_loss(
         self, 
         semantic_preds: torch.Tensor, 
@@ -291,12 +296,14 @@ class IMISNet(nn.Module):
         
         return torch.cat(repeated_embeddings, dim=0)
     
+
     def decode_masks(
         self, 
         image_embedding: torch.Tensor, 
         prompt: Dict[str, Any]
     ) -> Dict[str, torch.Tensor]:
         """Decode masks from image embeddings and prompts."""
+
         # Prepare prompts
         points = None
         if prompt.get("point_coords") is not None:
@@ -343,6 +350,7 @@ class IMISNet(nn.Module):
             'semantic_pred': semantic_pred
         }
     
+
     def _select_best_mask(
         self, 
         outputs: Dict[str, torch.Tensor]
@@ -365,11 +373,13 @@ class IMISNet(nn.Module):
         
         return selected_masks, max_values, selected_semantic
     
+
     def forward(self, image: torch.Tensor, prompt: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """Forward pass of the network."""
         image_embedding = self.encode_image(image)
         return self.decode_masks(image_embedding, prompt)
     
+
     def generate_prompts(
         self,
         prompt_type: str,
@@ -416,6 +426,7 @@ class IMISNet(nn.Module):
         
         return prompts
     
+
     # Compatibility methods for backward compatibility
     def supervised_prompts(
         self, 
@@ -430,6 +441,7 @@ class IMISNet(nn.Module):
             'supervised', labels, classes, pred_masks, low_res_masks, specify_prompt
         )
     
+
     def unsupervised_prompts(
         self,
         pseudo_labels: torch.Tensor,
@@ -452,6 +464,7 @@ class IMISNet(nn.Module):
         """Compute category loss (backward compatibility)."""
         return self.text_processor.compute_category_loss(semantic_preds, classes, ce_loss)
     
+
     def text_tokenizer(self, text: List[str], template: str = None) -> torch.Tensor:
         """Tokenize text (backward compatibility)."""
         if template:

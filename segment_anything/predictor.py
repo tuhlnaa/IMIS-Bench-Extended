@@ -21,13 +21,14 @@ class IMISPredictor:
         if self.model.category_weights is not None:
             self.idx_to_class = self.model.text_processor.index_to_category 
 
+
     def set_image(self,image: np.ndarray, image_format: str = "RGB") -> None:
         assert image_format in ["RGB","BGR",], f"image_format must be in ['RGB', 'BGR'], is {image_format}."
         if image_format != self.model.image_format:
             input_image = image[..., ::-1]
         else:
             input_image = image
-        # Transform the image to the form expected by the model
+        # # Transform the image to the form expected by the model
         # pixel_mean, pixel_std = np.array((123.675, 116.28, 103.53)), np.array((58.395, 57.12, 57.375))
         # input_image = (image - pixel_mean) / pixel_std
 
@@ -45,6 +46,7 @@ class IMISPredictor:
 
         self.features = self.model.encode_image(input_image.to(self.devices))
         self.is_image_set = True
+
 
     def predict(
         self,
@@ -102,6 +104,7 @@ class IMISPredictor:
             low_res_masks = low_res_masks[0].detach().cpu().numpy()
 
         return masks, low_res_masks, class_list
+
 
     @torch.no_grad()
     def predict_torch(
@@ -181,6 +184,7 @@ class IMISPredictor:
             category_preds = int(torch.argmax(probs, dim=-1).squeeze().cpu())
         return self.idx_to_class[category_preds]
     
+
     def postprocess_masks(self, masks, original_size):
         masks = F.interpolate(masks, original_size, mode="bilinear", align_corners=False)
         return masks
@@ -194,6 +198,7 @@ class IMISPredictor:
         coords[..., 1] = coords[..., 1] * (new_h / old_h)
 
         return coords
+
 
     def apply_boxes(self, boxes, original_size, new_size):
         boxes = self.apply_coords(boxes.reshape(-1, 2, 2), original_size, new_size)
