@@ -18,10 +18,10 @@ class Sam(nn.Module):
 
     def __init__(
         self,
-        image_encoder: ViT,
-        prompt_encoder: PromptEncoder,
-        mask_decoder: MaskDecoder,
-        text_model: CLIPTextModel(CLIPTextConfig()),
+        image_encoder: nn.Module,
+        prompt_encoder: nn.Module,
+        mask_decoder: nn.Module,
+        text_model: nn.Module,
         pixel_mean: List[float] = [123.675, 116.28, 103.53],
         pixel_std: List[float] = [58.395, 57.12, 57.375],
     ) -> None:
@@ -38,6 +38,7 @@ class Sam(nn.Module):
           pixel_std (list(float)): Std values for normalizing pixels in the input image.
         """
         super().__init__()
+
         self.image_encoder = image_encoder
         self.prompt_encoder = prompt_encoder
         self.mask_decoder = mask_decoder
@@ -47,9 +48,11 @@ class Sam(nn.Module):
         self.register_buffer("pixel_mean", torch.Tensor(pixel_mean).view(-1, 1, 1), False)
         self.register_buffer("pixel_std", torch.Tensor(pixel_std).view(-1, 1, 1), False)
 
+
     @property
     def device(self) -> Any:
         return self.pixel_mean.device
+ 
  
     def forward(self, batched_input: Dict[str, Any], multimask_output: bool) -> List[Dict[str, torch.Tensor]]:
 

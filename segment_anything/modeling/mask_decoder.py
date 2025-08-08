@@ -4,6 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from typing import Tuple, Type, Optional, Dict
 
+# Import custom modules
 from .common import LayerNorm2d
 
 
@@ -136,6 +137,7 @@ class MaskDecoder(nn.Module):
             'semantic_pred': semantic_pred[:, mask_slice, :]
         }
     
+
     def predict_masks(
         self,
         image_embeddings: torch.Tensor,

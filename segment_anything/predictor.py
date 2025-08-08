@@ -1,3 +1,5 @@
+# Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/predictor.py
+
 import numpy as np
 import torch
 from typing import Optional, Tuple
@@ -17,7 +19,7 @@ class IMISPredictor:
         self.reset_image()
  
         if self.model.category_weights is not None:
-            self.idx_to_class = self.model.index_to_category 
+            self.idx_to_class = self.model.text_processor.index_to_category 
 
     def set_image(self,image: np.ndarray, image_format: str = "RGB") -> None:
         assert image_format in ["RGB","BGR",], f"image_format must be in ['RGB', 'BGR'], is {image_format}."
@@ -41,7 +43,7 @@ class IMISPredictor:
             and input_image.shape[1] == 3
         ), f"set_torch_image input must be BCHW with long side {self.image_size}."
 
-        self.features = self.model.image_forward(input_image.to(self.devices))
+        self.features = self.model.encode_image(input_image.to(self.devices))
         self.is_image_set = True
 
     def predict(
@@ -134,7 +136,7 @@ class IMISPredictor:
                 prompt['bboxes'] = boxes[:,i:i+1,...]
                 # Predict masks
                 # outputs = self.model.forward_decoder(self.features, self.image_size, prompt)
-                outputs = self.model.forward_decoder(self.features, prompt)
+                outputs = self.model.decode_masks(self.features, prompt)
 
                 # Upscale the masks to the original image resolution
                 pre_masks = self.postprocess_masks(outputs['masks'], self.original_size)
@@ -148,7 +150,7 @@ class IMISPredictor:
           
         else:
             #outputs = self.model.forward_decoder(self.features, self.image_size, prompt)
-            outputs = self.model.forward_decoder(self.features, prompt)
+            outputs = self.model.decode_masks(self.features, prompt)
 
             # Upscale the masks to the original image resolution
             masks_list.append(self.postprocess_masks(outputs['masks'], self.original_size))
@@ -171,7 +173,7 @@ class IMISPredictor:
 
     
     def predict_category(self, semantic_preds):
-        logits = nn.functional.normalize(semantic_preds, dim=-1) @ self.model.src_weights
+        logits = nn.functional.normalize(semantic_preds, dim=-1) @ self.model.text_processor.src_weights
         probs = nn.functional.softmax(logits, dim=-1)
         if self.devices == 'cpu':
             category_preds = int(torch.argmax(probs, dim=-1).squeeze())

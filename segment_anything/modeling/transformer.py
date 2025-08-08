@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from typing import Tuple
 from torch import Tensor, nn
 
+# Import custom modules
 from .common import MLPBlock
 
 
@@ -53,6 +54,7 @@ class TwoWayTransformer(nn.Module):
             embedding_dim, num_heads, downsample_rate=attention_downsample_rate
         )
         self.norm_final_attn = nn.LayerNorm(embedding_dim)
+
 
     def forward(
         self,
@@ -127,6 +129,7 @@ class TwoWayAttentionBlock(nn.Module):
           skip_first_layer_pe: skip the PE on the first layer
         """
         super().__init__()
+
         self.self_attn = Attention(embedding_dim, num_heads)
         self.norm1 = nn.LayerNorm(embedding_dim)
 
@@ -242,3 +245,4 @@ class Attention(nn.Module):
         )
         
         return self.out_proj(attn_output)
+    

@@ -2,9 +2,10 @@
 import torch
 
 from typing import Optional
-from transformers import AutoTokenizer, CLIPTextModel, CLIPTextConfig
+from transformers import CLIPTextConfig, CLIPTextModel
 from omegaconf import OmegaConf
 
+# Import custom modules
 from .modeling import ViT, MaskDecoder, PromptEncoder, Sam, TwoWayTransformer
 
 
@@ -69,7 +70,7 @@ def build_sam(
         Configured SAM model
     """
     image_embedding_size = image_size // vit_patch_size
-    
+
     sam = Sam(
         image_encoder=ViT(
             encoder_embed_dim=encoder_embed_dim,
