@@ -1,19 +1,14 @@
 # Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/predictor.py
 
-from __future__ import annotations
-
-import warnings
-from copy import deepcopy
-from typing import Optional, Tuple, List, Dict, Any, Union
-
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from monai import transforms
 from torchvision.transforms import v2
 from torchvision.transforms import InterpolationMode
-from dataloaders.data_utils import Resize, PermuteTransform, Normalization
+from typing import Optional, Tuple, List, Dict, Any
 
 
 class IMISPredictor:
@@ -89,7 +84,8 @@ class IMISPredictor:
         self.input_h, self.input_w = self.image_size
         
         # Transform and encode image
-        input_tensor = self._preprocess_image(input_image)
+        transform = self._get_transforms()
+        input_tensor = transform(input_image).unsqueeze(0)
         self.features = self.model.encode_image(input_tensor.to(self.device))
         self.is_image_set = True
     
@@ -99,39 +95,8 @@ class IMISPredictor:
         if image_format != self.model.image_format:
             return image[..., ::-1]  # BGR <-> RGB conversion
         return image
-    
 
-    def _preprocess_image(self, image: np.ndarray) -> torch.Tensor:
-        """Apply preprocessing transforms to image."""
-        transform = self._get_transforms()
 
-        transformed_image = transform(image).unsqueeze(0)
-
-        # print(image.shape)
-        # transformed_image = transform(image).unsqueeze(0)
-        # print(transformed_image.shape)
-        # print(transformed_image.dtype, transformed_image.max(), transformed_image.min())
-        # # processed = transform({'image': image})['image'][None, :, :, :]
-        # # print(processed.shape)
-        # # print(processed.dtype, processed.max(), processed.min())
-        # quit()
-
-        if len(transformed_image.shape) != 4 or transformed_image.shape[1] != 3:
-            raise AssertionError(
-                f"Preprocessed image must be BCHW with 3 channels, got {transformed_image.shape}"
-            )
-        
-        return transformed_image
-    
-    # def _get_transforms(self) -> transforms.Compose:
-    #     """Get image preprocessing transforms."""
-    #     return transforms.Compose([
-    #         Resize(keys=["image"], target_size=self.image_size),
-    #         PermuteTransform(keys=["image"], dims=(2, 0, 1)),
-    #         transforms.ToTensord(keys=["image"]),
-    #         Normalization(keys=["image"]),
-    #     ])
-    
     def _get_transforms(self) -> transforms.Compose:
         """Get image preprocessing transforms."""
         return v2.Compose([
@@ -140,6 +105,7 @@ class IMISPredictor:
         v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     
+
     def predict(
         self,
         point_coords: Optional[np.ndarray] = None,

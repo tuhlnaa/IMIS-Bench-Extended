@@ -6,6 +6,9 @@ import torch.nn as nn
 
 from timm.layers import resample_abs_pos_embed_nhwc
 
+# Import custom modules
+from segment_anything.modeling.common import LayerNorm2d
+
 
 class ViT(nn.Module):
     """Vision Transformer with SAM encoder backbone and feature neck.
@@ -60,11 +63,11 @@ class ViT(nn.Module):
         """Build the neck module for feature adaptation."""
         return nn.Sequential(
             nn.Conv2d(in_chans, out_chans, kernel_size=1, bias=False),
-            # LayerNorm2d(out_chans),
-            nn.GroupNorm(1, out_chans),
+            LayerNorm2d(out_chans),
+            #nn.GroupNorm(1, out_chans),
             nn.Conv2d(out_chans, out_chans, kernel_size=3, padding=1, bias=False),
-            # LayerNorm2d(out_chans),
-            nn.GroupNorm(1, out_chans)
+            LayerNorm2d(out_chans),
+            #nn.GroupNorm(1, out_chans)
         )
 
 
