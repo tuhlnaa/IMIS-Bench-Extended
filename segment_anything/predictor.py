@@ -11,7 +11,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from monai import transforms
-
+from torchvision.transforms import v2
+from torchvision.transforms import InterpolationMode
 from dataloaders.data_utils import Resize, PermuteTransform, Normalization
 
 
@@ -103,25 +104,42 @@ class IMISPredictor:
     def _preprocess_image(self, image: np.ndarray) -> torch.Tensor:
         """Apply preprocessing transforms to image."""
         transform = self._get_transforms()
-        processed = transform({'image': image})['image'][None, :, :, :]
-        
-        if len(processed.shape) != 4 or processed.shape[1] != 3:
+
+        transformed_image = transform(image).unsqueeze(0)
+
+        # print(image.shape)
+        # transformed_image = transform(image).unsqueeze(0)
+        # print(transformed_image.shape)
+        # print(transformed_image.dtype, transformed_image.max(), transformed_image.min())
+        # # processed = transform({'image': image})['image'][None, :, :, :]
+        # # print(processed.shape)
+        # # print(processed.dtype, processed.max(), processed.min())
+        # quit()
+
+        if len(transformed_image.shape) != 4 or transformed_image.shape[1] != 3:
             raise AssertionError(
-                f"Preprocessed image must be BCHW with 3 channels, got {processed.shape}"
+                f"Preprocessed image must be BCHW with 3 channels, got {transformed_image.shape}"
             )
         
-        return processed
+        return transformed_image
+    
+    # def _get_transforms(self) -> transforms.Compose:
+    #     """Get image preprocessing transforms."""
+    #     return transforms.Compose([
+    #         Resize(keys=["image"], target_size=self.image_size),
+    #         PermuteTransform(keys=["image"], dims=(2, 0, 1)),
+    #         transforms.ToTensord(keys=["image"]),
+    #         Normalization(keys=["image"]),
+    #     ])
     
     def _get_transforms(self) -> transforms.Compose:
         """Get image preprocessing transforms."""
-        return transforms.Compose([
-            Resize(keys=["image"], target_size=self.image_size),
-            PermuteTransform(keys=["image"], dims=(2, 0, 1)),
-            transforms.ToTensord(keys=["image"]),
-            Normalization(keys=["image"]),
-        ])
+        return v2.Compose([
+        v2.ToTensor(),
+        v2.Resize(self.image_size, interpolation=InterpolationMode.NEAREST),
+        v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
     
-
     def predict(
         self,
         point_coords: Optional[np.ndarray] = None,
