@@ -62,6 +62,7 @@ class MedicalImageSegmentation:
         """Load the SAM model and IMISNet."""
         try:
             sam = get_sam_model(self.config.model.sam_model_type, self.config).to(self.device)
+            
             self.imis_net = IMISNet(
                 sam, 
                 test_mode=self.config.model.test_mode, 

@@ -1,14 +1,103 @@
 # src/utils/inference.py
 import numpy as np
 
-from pathlib import Path
 from matplotlib import pyplot as plt
-from typing import Dict, Any, List, Tuple, Union
-
 from omegaconf import OmegaConf
+from pathlib import Path
+from typing import Dict, Any, List, Tuple
 
 from src.models.segmentation import MedicalImageSegmentation
 from src.utils.visualization import VisualizationUtils
+
+
+def run_interactive_demo(
+    config: OmegaConf,
+    image_path: str,
+    examples: List[Dict[str, Any]],
+    output_dir: str = "output",
+) -> Dict[str, Dict[str, Any]]:
+    """Run interactive segmentation demonstration with declarative multi-step workflows."""
+
+    image_path = Path(image_path)
+    output_path = Path(output_dir)
+
+    # Create output directory if it doesn't exist
+    output_path.mkdir(parents=True, exist_ok=True)
+    filename_stem = image_path.stem
+
+    # Initialize demo components
+    demo = MedicalImageSegmentation(config)
+    vis_utils = VisualizationUtils(output_path, filename_stem)
+
+    # Load and display original image
+    image = demo.load_image(image_path)
+
+    plt.figure()
+    plt.imshow(image)
+    vis_utils.save_plot("Original Image", "original")
+
+    # Process all examples using unified logic
+    results = {}
+    for example in examples:
+        if example.get('workflow_type') == 'multistep':
+            # Handle multi-step workflow
+            masks, logits, category_pred = run_workflow_chain(demo, vis_utils, image, example['steps'])
+            results[example['name']] = {
+                'masks': masks,
+                'logits': logits,
+                'category_pred': category_pred
+            }
+        else:
+            # Handle single-step example
+            masks, logits, category_pred = run_segmentation(demo, vis_utils, image, example)
+            results[example['name']] = {
+                'masks': masks,
+                'logits': logits,
+                'category_pred': category_pred
+            }
+
+    print(f"\nSegmentation demonstration completed. Results saved to {output_path}")
+    return results
+
+
+def run_workflow_chain(
+        model: MedicalImageSegmentation,
+        vis_utils: VisualizationUtils,
+        image: np.ndarray,
+        workflow_steps: List[Dict[str, Any]],
+    ) -> Tuple[np.ndarray, np.ndarray, str]:
+    """
+    Run a chain of segmentation steps where each step can use results from previous steps.
+    
+    Args:
+        model: MedicalImageSegmentation instance
+        vis_utils: VisualizationUtils instance
+        image: Input image array
+        workflow_steps: List of workflow step dictionaries
+    
+    Returns:
+        tuple: (final_masks, final_logits, final_category_pred)
+    """
+    previous_logits = None
+    
+    for i, step in enumerate(workflow_steps):
+        # Create a copy to avoid modifying the original
+        current_step = step.copy()
+        
+        # Add previous logits as mask_input if requested and available
+        if (current_step.get('use_previous_logits', False) and 
+            previous_logits is not None and 
+            'mask_input' not in current_step):
+            current_step['mask_input'] = previous_logits
+        
+        # Remove the flag as it's not needed for the actual segmentation
+        current_step.pop('use_previous_logits', None)
+        
+        masks, logits, category_pred = run_segmentation(model, vis_utils, image, current_step)
+        previous_logits = logits
+    
+    return masks, logits, category_pred
+
 
 def run_segmentation(
         model: MedicalImageSegmentation,
@@ -106,92 +195,3 @@ def run_segmentation(
     )
     
     return masks, logits, category_pred
-
-
-def run_workflow_chain(
-        model: MedicalImageSegmentation,
-        vis_utils: VisualizationUtils,
-        image: np.ndarray,
-        workflow_steps: List[Dict[str, Any]],
-    ) -> Tuple[np.ndarray, np.ndarray, str]:
-    """
-    Run a chain of segmentation steps where each step can use results from previous steps.
-    
-    Args:
-        model: MedicalImageSegmentation instance
-        vis_utils: VisualizationUtils instance
-        image: Input image array
-        workflow_steps: List of workflow step dictionaries
-    
-    Returns:
-        tuple: (final_masks, final_logits, final_category_pred)
-    """
-    previous_logits = None
-    
-    for i, step in enumerate(workflow_steps):
-        # Create a copy to avoid modifying the original
-        current_step = step.copy()
-        
-        # Add previous logits as mask_input if requested and available
-        if (current_step.get('use_previous_logits', False) and 
-            previous_logits is not None and 
-            'mask_input' not in current_step):
-            current_step['mask_input'] = previous_logits
-        
-        # Remove the flag as it's not needed for the actual segmentation
-        current_step.pop('use_previous_logits', None)
-        
-        masks, logits, category_pred = run_segmentation(model, vis_utils, image, current_step)
-        previous_logits = logits
-    
-    return masks, logits, category_pred
-
-
-def run_interactive_demo(
-        config: OmegaConf,
-        image_path: str,
-        examples: List[Dict[str, Any]],
-        output_dir: str = "output",
-    ) -> Dict[str, Dict[str, Any]]:
-    """Run interactive segmentation demonstration with declarative multi-step workflows."""
-
-    image_path = Path(image_path)
-    output_path = Path(output_dir)
-
-    # Create output directory if it doesn't exist
-    output_path.mkdir(parents=True, exist_ok=True)
-    filename_stem = image_path.stem
-
-    # Initialize demo components
-    demo = MedicalImageSegmentation(config)
-    vis_utils = VisualizationUtils(output_path, filename_stem)
-
-    # Load and display original image
-    image = demo.load_image(image_path)
-
-    plt.figure()
-    plt.imshow(image)
-    vis_utils.save_plot("Original Image", "original")
-
-    # Process all examples using unified logic
-    results = {}
-    for example in examples:
-        if example.get('workflow_type') == 'multistep':
-            # Handle multi-step workflow
-            masks, logits, category_pred = run_workflow_chain(demo, vis_utils, image, example['steps'])
-            results[example['name']] = {
-                'masks': masks,
-                'logits': logits,
-                'category_pred': category_pred
-            }
-        else:
-            # Handle single-step example
-            masks, logits, category_pred = run_segmentation(demo, vis_utils, image, example)
-            results[example['name']] = {
-                'masks': masks,
-                'logits': logits,
-                'category_pred': category_pred
-            }
-
-    print(f"\nSegmentation demonstration completed. Results saved to {output_path}")
-    return results
