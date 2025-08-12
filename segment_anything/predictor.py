@@ -229,23 +229,23 @@ class ClassificationHandler:
 class IMISPredictor:
     """Orchestrates the above components for end-to-end prediction"""
     
-    def __init__(self, sam_model: nn.Module):
+    def __init__(self, imis_model: nn.Module):
         """Initialize the predictor with a SAM model.
         
         Args:
             sam_model: Pre-trained SAM model instance
         """
-        self.model = sam_model
-        self.device = sam_model.device
+        self.model = imis_model
+        self.device = imis_model.device
         
         # Initialize component classes
         self.image_preprocessor = ImagePreprocessor(
-            image_size=sam_model.image_size,
-            model_image_format=getattr(sam_model, 'image_format', 'RGB')
+            image_size=imis_model.image_size,
+            model_image_format=getattr(imis_model, 'image_format', 'RGB')
         )
         self.prompt_processor = PromptProcessor(self.device)
         self.mask_postprocessor = MaskPostProcessor()
-        self.classification_handler = ClassificationHandler(sam_model)
+        self.classification_handler = ClassificationHandler(imis_model)
         
         # Initialize state
         self._reset_state()
@@ -283,8 +283,8 @@ class IMISPredictor:
         self,
         point_coords: Optional[np.ndarray] = None,
         point_labels: Optional[np.ndarray] = None,
-        box: Optional[np.ndarray] = None,
-        text: Optional[List[str]] = None,
+        bounding_box: Optional[np.ndarray] = None,
+        text_prompt: Optional[List[str]] = None,
         mask_input: Optional[np.ndarray] = None,
         multimask_output: bool = True,
         return_logits: bool = False,
@@ -294,8 +294,8 @@ class IMISPredictor:
         Args:
             point_coords: Point coordinates (N, 2)
             point_labels: Point labels (N,) - 1 for positive, 0 for negative
-            box: Bounding box coordinates (4,) or (N, 4)
-            text: Text prompts for segmentation
+            bounding_box: Bounding box coordinates (4,) or (N, 4)
+            text_prompt: Text prompts for segmentation
             mask_input: Previous mask prediction for refinement
             multimask_output: Whether to output multiple masks
             return_logits: Return raw logits instead of binary masks
@@ -311,7 +311,7 @@ class IMISPredictor:
         
         # Convert prompts to tensors
         prompt_tensors = self.prompt_processor.prepare_prompt_tensors(
-            point_coords, point_labels, box, text, mask_input,
+            point_coords, point_labels, bounding_box, text_prompt, mask_input,
             self.original_size, self.image_size
         )
         
