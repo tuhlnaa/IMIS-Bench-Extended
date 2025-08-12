@@ -1,6 +1,7 @@
 # Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/build_sam.py
 import torch
 
+from torch import nn
 from typing import Optional
 from transformers import CLIPTextConfig, CLIPTextModel
 from omegaconf import OmegaConf
@@ -51,7 +52,7 @@ def build_sam(
     pretrain_model: str,
     prompt_embed_dim: int = DEFAULT_PROMPT_EMBED_DIM,
     vit_patch_size: int = DEFAULT_VIT_PATCH_SIZE
-) -> Sam:
+) -> nn.Module:
     """
     Build a SAM model with specified configuration.
     

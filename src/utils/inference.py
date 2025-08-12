@@ -28,7 +28,7 @@ def load_model(config: OmegaConf, device: torch.device):
             category_weights=config.category_weights_path
         ).to(device)
         
-        predictor = IMISPredictor(imis_net)
+        predictor = IMISPredictor(imis_net, imis_net.encode_image, imis_net.decode_masks)
         print(f"[blue]Model loaded successfully on {device}[/blue]")
         
     except Exception as e:

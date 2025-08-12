@@ -363,11 +363,13 @@ def get_loader(args):
     return data_loader
 
 if __name__ == "__main__":
+    # Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline
+    os.environ["USE_LIBUV"] = "0"
     import argparse
-    dist.init_process_group(backend='nccl', init_method='tcp://localhost:23456', rank=0, world_size=1)
+    dist.init_process_group(backend='gloo', init_method='tcp://localhost:23456', rank=0, world_size=1)
     def set_parse():
         parser = argparse.ArgumentParser()
-        parser.add_argument("--data_dir", type=str, default='dataset/BTCV')
+        parser.add_argument("--data_dir", type=str, default="D:/Kai/DATA_Set_2/medical-segmentation/BTCV")
         parser.add_argument('--image_size', type=int, default=256)
         parser.add_argument('--test_mode', type=bool, default=False)
         parser.add_argument('--batch_size', type=int, default=4)
@@ -378,9 +380,24 @@ if __name__ == "__main__":
         return args
     args = set_parse()
     train_loader = get_loader(args)
-    for idx, batch in enumerate(train_loader):
+
+    # print(f"Dataset size: {len(dataset)} samples")
+    print(f"Number of batches: {len(train_loader)}\n")
+
+    for batch_idx, batch in enumerate(train_loader):  
         image, label = batch["image"], batch["label"]
+        bbox = batch['gt_prompt']['bboxes']
         # pseudo = batch['pseudo']
+
+        print(f"Batch {batch_idx + 1}:")
+        print(f"  Image shape: {image.shape}")
+        print(f"  Label shape: {label.shape}")
+        print(f"  Bounding Box shape: {bbox.shape}")
+        # print(f"  Pseudo shape: {batch['pseudo'].shape}")
+        print(f"  Data type: {image.dtype}\n")
+
         print(batch['target_list'])
-        print(image.shape, label.shape) #, pseudo.shape
-        print(batch['gt_prompt']['bboxes'].shape)
+        
+        # Only show first 3 batches
+        if batch_idx >= 2:
+            break

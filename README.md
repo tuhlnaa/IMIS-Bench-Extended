@@ -43,19 +43,6 @@ git clone https://github.com/uni-medical/IMIS-Bench.git
 
 <br>
 
-## Environment Setup
-The recommended operating environment is as follows:
-
-| Package           | Version    | Package         | Version |
-|-------------------|------------|-----------------|---------|
-| CUDA              | 11.8       | timm            | 0.9.16  |
-| Huggingface-Hub   | 0.23.4     | transformers    | 4.39.3  |
-| nibabel           | 5.2.1      | monai           | 0.9.1   |
-| Python            | 3.8.19     | opencv-python   | 4.10.0  |
-| PyTorch           | 2.2.1      | torchvision     | 0.17.2  |
-
-<br>
-
 ## Datasets
 IMed-361 was created by preprocessing a combination of private and publicly available medical image segmentation datasets. The dataset will be made available on [HuggingFace](https://huggingface.co/datasets/1Junlong/IMed-361M/tree/main). For detailed information about the source datasets, please refer to our [paper](https://arxiv.org/pdf/2411.12814). To help you get started quickly, we have provided a small sample demonstration IMIS-Bench/dataset from IMed-361.
 

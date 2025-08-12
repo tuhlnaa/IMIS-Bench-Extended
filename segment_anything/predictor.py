@@ -229,13 +229,15 @@ class ClassificationHandler:
 class IMISPredictor:
     """Orchestrates the above components for end-to-end prediction"""
     
-    def __init__(self, imis_model: nn.Module):
+    def __init__(self, imis_model: nn.Module, encode_image, decode_masks):
         """Initialize the predictor with a SAM model.
         
         Args:
             sam_model: Pre-trained SAM model instance
         """
         self.model = imis_model
+        self.encode_image = encode_image
+        self.decode_masks = decode_masks
         self.device = imis_model.device
         
         # Initialize component classes
@@ -275,7 +277,7 @@ class IMISPredictor:
         input_tensor = self.image_preprocessor.preprocess_image(image, image_format)
         
         # Encode image
-        self.features = self.model.encode_image(input_tensor.to(self.device))
+        self.features = self.encode_image(input_tensor.to(self.device))
         self.is_image_set = True
     
 
@@ -374,7 +376,7 @@ class IMISPredictor:
         
         for i in range(boxes.shape[1]):
             prompt['bboxes'] = boxes[:, i:i+1, ...]
-            outputs = self.model.decode_masks(self.features, prompt)
+            outputs = self.decode_masks(self.features, prompt)
             
             # Process masks
             masks = self.mask_postprocessor.postprocess_masks(outputs['masks'], self.original_size)
@@ -392,7 +394,7 @@ class IMISPredictor:
         self, prompt: Dict[str, Any]
     ) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
         """Process a single prompt."""
-        outputs = self.model.decode_masks(self.features, prompt)
+        outputs = self.decode_masks(self.features, prompt)
         
         masks = self.mask_postprocessor.postprocess_masks(outputs['masks'], self.original_size)
         class_pred = self.classification_handler.get_class_prediction(outputs.get('semantic_pred'))
