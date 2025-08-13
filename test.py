@@ -28,9 +28,22 @@ import warnings
 import re
 from data_loader import get_loader 
 
+import os
+import random
+import logging
+import datetime
+from typing import Optional, Dict, Any
+
+import numpy as np
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.backends import cudnn
+
+
 # Import custom modules
 from configs.config import parse_args
-from src.utils.inference import load_model
+from src.utils.inference import determine_device, load_model
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -75,14 +88,6 @@ device = args.device
 MODEL_SAVE_PATH = join(args.work_dir, args.task_name)
 os.makedirs(MODEL_SAVE_PATH, exist_ok=True)
 
-def build_model(args):
-    category_weights = 'dataloaders/categories_weight.pkl'
-    sam = sam_model_registry[args.model_type](args).to(device)
-    imis = IMISNet(sam, test_mode=args.test_mode, category_weights=category_weights).to(device)
-    if args.multi_gpu:
-        imis = DDP(imis, device_ids=[args.rank], output_device=args.rank)
-    return imis
-
 
 class BaseTester:
     def __init__(self, model, dataloaders, args):
@@ -103,14 +108,14 @@ class BaseTester:
     def load_checkpoint(self, ckp_path):
         last_ckpt = None
         if os.path.exists(ckp_path):
-            if self.args.multi_gpu:
+            if self.args.device.multi_gpu.enabled:
                 dist.barrier()
-                last_ckpt = torch.load(ckp_path, map_location=self.args.device)
+                last_ckpt = torch.load(ckp_path, map_location=self.args.device.device)
             else:
-                last_ckpt = torch.load(ckp_path, map_location=self.args.device)
+                last_ckpt = torch.load(ckp_path, map_location=self.args.device.device)
         
         if last_ckpt:
-            if self.args.multi_gpu:
+            if self.args.device.multi_gpu.enabled:
                 try:
                     self.model.module.load_state_dict(last_ckpt['model_state_dict'])
                 except:
@@ -144,7 +149,7 @@ class BaseTester:
 
     def interaction(self, model, image_embedding, low_masks, mask_preds, labels):
         with torch.no_grad():
-            for inter in range(self.args.inter_num-1):
+            for inter in range(self.args.dataset.inter_num-1):
                 prompts = model.supervised_prompts(None, labels, mask_preds, low_masks, 'points')
                 #outputs = model.forward_decoder(image_embedding, prompts)
                 outputs = model.decode_masks(image_embedding, prompts)
@@ -156,7 +161,7 @@ class BaseTester:
 
     def test(self):
         self.model.eval()
-        if self.args.multi_gpu:
+        if self.args.device.multi_gpu.enabled:
             model = self.model.module
             dist.barrier()
         else:
@@ -168,8 +173,8 @@ class BaseTester:
         category_level_metrics = {}
         avg_dice = []
         for step, batch_input in enumerate(tbar): 
-            images, labels = batch_input["image"].to(device), batch_input["label"].to(device).type(torch.long)
-            ori_labels = batch_input["ori_label"].to(device).type(torch.long)
+            images, labels = batch_input["image"].to(self.args.device.device), batch_input["label"].to(self.args.device.device).type(torch.long)
+            ori_labels = batch_input["ori_label"].to(self.args.device.device).type(torch.long)
             target_list = batch_input['target_list']
 
             gt_prompt = batch_input["gt_prompt"]
@@ -185,13 +190,13 @@ class BaseTester:
             for cls_idx in range(len(target_list)):
                 labels_cls = labels[cls_idx:cls_idx+1]
                 ori_labels_cls = ori_labels[cls_idx:cls_idx+1]
-                if self.args.prompt_mode == 'bboxes':
-                    test_prompts['bboxes'] = gt_prompt['bboxes'][cls_idx:cls_idx+1].to(device)
-                elif self.args.prompt_mode == 'points':
-                    test_prompts['point_coords'] = gt_prompt['point_coords'][cls_idx:cls_idx+1].to(device)
-                    test_prompts['point_labels'] = gt_prompt['point_labels'][cls_idx:cls_idx+1].to(device)
-                elif self.args.prompt_mode == 'text':
-                    test_prompts['text_inputs'] = text_prompt['text_inputs'][cls_idx:cls_idx+1].to(device)
+                if self.args.dataset.prompt_mode == 'bboxes':
+                    test_prompts['bboxes'] = gt_prompt['bboxes'][cls_idx:cls_idx+1].to(self.args.device.device)
+                elif self.args.dataset.prompt_mode == 'points':
+                    test_prompts['point_coords'] = gt_prompt['point_coords'][cls_idx:cls_idx+1].to(self.args.device.device)
+                    test_prompts['point_labels'] = gt_prompt['point_labels'][cls_idx:cls_idx+1].to(self.args.device.device)
+                elif self.args.dataset.prompt_mode == 'text':
+                    test_prompts['text_inputs'] = text_prompt['text_inputs'][cls_idx:cls_idx+1].to(self.args.device.device)
                 else:
                     print('Please setting correct prompt mode')
 
@@ -202,7 +207,7 @@ class BaseTester:
                     mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
                     loss = self.seg_loss(mask_preds, labels_cls.float(), outputs['iou_pred'])
           
-                if self.args.inter_num > 1:
+                if self.args.dataset.inter_num > 1:
                     image_embedding = image_embedding.detach()
                     loss, mask_preds = self.interaction(model, image_embedding, low_masks,  mask_preds, labels_cls)
 
@@ -221,8 +226,8 @@ class BaseTester:
        
             logger.info(f"{image_root}, loss: {loss:.4f}, iou: {iou:.4f}, dice: {dice:.4f}")
 
-        if self.args.multi_gpu:
-            local_dice = torch.tensor([float(np.mean(avg_dice))]).to(self.args.device)
+        if self.args.device.multi_gpu.enabled:
+            local_dice = torch.tensor([float(np.mean(avg_dice))]).to(self.args.device.device)
             dist.all_reduce(local_dice, op=dist.ReduceOp.SUM) 
             Avg_dice = local_dice.item() / dist.get_world_size()
         else:
@@ -234,85 +239,219 @@ class BaseTester:
         logger.info('=====================================================================')
 
 
-def init_seeds(seed=0, cuda_deterministic=True):
+
+
+
+def init_seeds(seed: int = 0, cuda_deterministic: bool = True) -> None:
+    """Initialize random seeds for reproducibility.
+    
+    Args:
+        seed: Random seed value
+        cuda_deterministic: If True, use deterministic CUDA operations (slower but reproducible)
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if cuda_deterministic: 
-        cudnn.deterministic = True
-        cudnn.benchmark = False
-    else: 
-        cudnn.deterministic = False
-        cudnn.benchmark = True
-
-def device_config(args):
-    try:
-        if not args.multi_gpu:
-            if args.device == 'mps':
-                args.device = torch.device('mps')
-            else:
-                args.device = torch.device(f"cuda:{args.gpu_ids[0]}")
+    
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        
+        if cuda_deterministic:
+            cudnn.deterministic = True
+            cudnn.benchmark = False
         else:
+            cudnn.deterministic = False
+            cudnn.benchmark = True
+
+
+def setup_device(args) -> None:
+    """Configure device settings based on args.
+    
+    Args:
+        args: Configuration object containing device settings
+        
+    Raises:
+        RuntimeError: If device configuration fails
+    """
+    try:
+        if not args.device.multi_gpu.enabled:
+            if hasattr(args, 'device') and args.device == 'mps':
+                if torch.backends.mps.is_available():
+                    args.device = torch.device('mps')
+                else:
+                    print("MPS not available, falling back to CPU")
+                    args.device = torch.device('cpu')
+            elif hasattr(args, 'gpu_ids') and args.gpu_ids and torch.cuda.is_available():
+                args.device = torch.device(f"cuda:{args.gpu_ids[0]}")
+            else:
+                args.device = torch.device('cpu')
+        else:
+            if not (hasattr(args, 'gpu_ids') and args.gpu_ids):
+                raise ValueError("GPU IDs must be specified for multi-GPU training")
+            
             args.nodes = 1
             args.ngpus_per_node = len(args.gpu_ids)
             args.world_size = args.nodes * args.ngpus_per_node
-    except RuntimeError as e:
-        print(e)
+            
+    except (RuntimeError, ValueError) as e:
+        print(f"Device configuration error: {e}")
+        raise
 
-def main():
-    config = parse_args()
+
+def setup_logging(rank: int, log_dir: str, prompt_mode: str) -> None:
+    """Setup logging configuration for distributed training.
     
-    print('*'*100)
-    for key, value in vars(args).items():
-        print(key + ': ' + str(value))
-    print('*'*100)
-    mp.set_sharing_strategy('file_system')
-    device_config(args)
-    if args.multi_gpu:
-        mp.spawn(main_worker, nprocs=args.world_size, args=(args, ))
-    else:
-        random.seed(42)
-        np.random.seed(42)
-        torch.manual_seed(42)
-        dataloaders = get_loader(args)
-        #model = build_model(args)
-        model, _ = load_model(config, device)
-        tester = BaseTester(model, dataloaders, args)
-        tester.test()
-
-def main_worker(rank, args):
-    setup(rank, args.world_size)
-    torch.cuda.set_device(rank)
-    args.device = torch.device(f"cuda:{rank}")
-    args.rank = rank
-    args.gpu_info = {"gpu_count":args.world_size, 'gpu_name':rank}
-    init_seeds(2023 + rank)
-
+    Args:
+        rank: Process rank (0 for main process)
+        log_dir: Directory to save log files
+        prompt_mode: Mode identifier for log filename
+    """
+    os.makedirs(log_dir, exist_ok=True)
+    
     cur_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    log_filename = os.path.join(log_dir, f'{prompt_mode}_output_{cur_time}_rank_{rank}.log')
+    
     logging.basicConfig(
         format='[%(asctime)s] - %(message)s',
         datefmt='%Y/%m/%d %H:%M:%S',
         level=logging.INFO if rank in [-1, 0] else logging.WARN,
         filemode='w',
-        filename=os.path.join(LOG_OUT_DIR, f'{args.prompt_mode}_output_{cur_time}.log')) 
-   
-    dataloaders = get_loader(args)
-    model = build_model(args)
-    tester = BaseTester(model, dataloaders, args)
-    tester.test()
-    cleanup()
+        filename=log_filename
+    )
 
 
-def setup(rank, world_size):
+def setup_distributed(rank: int, world_size: int, port: int = 12355) -> None:
+    """Initialize distributed training setup.
+    
+    Args:
+        rank: Process rank
+        world_size: Total number of processes
+        port: Master port for communication
+    """
     os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = f'{args.port}'
-    # Change from 'NCCL' to 'gloo' for Windows
-    dist.init_process_group(backend='gloo', init_method='env://', rank=rank, world_size=world_size)
+    os.environ['MASTER_PORT'] = str(port)
+    
+    # Use NCCL for CUDA, gloo for CPU/MPS or Windows
+    backend = 'nccl' if torch.cuda.is_available() and os.name != 'nt' else 'gloo'
+    
+    dist.init_process_group(
+        backend=backend, 
+        init_method='env://', 
+        rank=rank, 
+        world_size=world_size
+    )
 
-def cleanup():
-    dist.destroy_process_group()
+
+def cleanup_distributed() -> None:
+    """Clean up distributed training resources."""
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+
+def print_config(config) -> None:
+    """Print configuration parameters in a formatted way.
+    
+    Args:
+        config: Configuration object to print
+    """
+    print('=' * 100)
+    print('Configuration:')
+    for key, value in vars(config).items():
+        print(f'  {key}: {value}')
+    print('=' * 100)
+
+
+def run_single_gpu(config) -> None:
+    """Run training/testing on single GPU or CPU.
+    
+    Args:
+        config: Configuration object
+    """
+    # Initialize seeds for reproducibility
+    init_seeds(seed=42, cuda_deterministic=True)
+    
+    # Load data and model
+    device = determine_device(config)
+    dataloaders = get_loader(config)
+    model, _ = load_model(config, device)
+    
+    # Initialize tester and run
+    tester = BaseTester(model, dataloaders, config)
+    tester.test()
+
+
+def main_worker(rank: int, config) -> None:
+    """Main worker function for distributed training.
+    
+    Args:
+        rank: Process rank
+        config: Configuration object
+    """
+    try:
+        # Setup distributed training
+        setup_distributed(rank, config.world_size, getattr(config, 'port', 12355))
+        
+        # Set device for this process
+        if torch.cuda.is_available():
+            torch.cuda.set_device(rank)
+            config.device = torch.device(f"cuda:{rank}")
+        else:
+            config.device = torch.device('cpu')
+            
+        config.rank = rank
+        config.gpu_info = {"gpu_count": config.world_size, 'gpu_name': rank}
+        
+        # Initialize seeds with rank offset for different initialization per process
+        init_seeds(2023 + rank, cuda_deterministic=True)
+        
+        # Setup logging
+        log_dir = getattr(config, 'log_dir', './logs')
+        prompt_mode = getattr(config, 'prompt_mode', 'default')
+        setup_logging(rank, log_dir, prompt_mode)
+        
+        # Load data and model
+        dataloaders = get_loader(config)
+        model, _ = load_model(config, device)
+        
+        # Initialize tester and run
+        tester = BaseTester(model, dataloaders, config)
+        tester.test()
+        
+    except Exception as e:
+        logging.error(f"Error in worker {rank}: {e}")
+        raise
+    finally:
+        cleanup_distributed()
+
+
+def main():
+    """Main entry point for the application."""
+    config = parse_args()
+    print_config(config)
+    
+    # Set multiprocessing sharing strategy
+    mp.set_sharing_strategy('file_system')
+    
+    # Setup device configuration
+    #setup_device(config)
+    
+    # Run training/testing
+    if getattr(config, 'multi_gpu', False):
+        # Multi-GPU distributed training
+        mp.spawn(
+            main_worker, 
+            nprocs=config.world_size, 
+            args=(config,)
+        )
+    else:
+        # Single GPU/CPU training
+        run_single_gpu(config)
+        
 
 if __name__ == '__main__':
-    # Add this line for Windows multiprocessing
-    mp.set_start_method('spawn', force=True)
+    # Set multiprocessing start method
+    if mp.get_start_method(allow_none=True) != 'spawn':
+        mp.set_start_method('spawn', force=True)
+    
     main()

@@ -1,6 +1,7 @@
 import os
 import ast
 import json
+from omegaconf import OmegaConf
 import torch
 import random
 import argparse
@@ -16,11 +17,13 @@ from torch.utils.data.distributed import DistributedSampler
 from typing import Dict, List, Tuple, Any
 from pathlib import Path
 from PIL import Image
+from configs.config import parse_args
 from dataloaders.data_utils import (
     cleanse_pseudo_label,
     get_points_from_mask, 
     get_bboxes_from_mask
 )
+from src.utils.logging_utils import LoggingManager
 
 
 class UniversalDataset(Dataset):
@@ -45,9 +48,9 @@ class UniversalDataset(Dataset):
         """
         self.data_dir = Path(args.data_dir)
         self.datalist = datalist
-        self.test_mode = args.test_mode
-        self.image_size = args.image_size
-        self.mask_num = args.mask_num
+        self.test_mode = args.model.test_mode
+        self.image_size = args.model.image_size
+        self.mask_num = args.dataset.mask_num
         self.transform = transform
         
         # Remove background from target list
@@ -571,12 +574,14 @@ def get_loader(args):
 
     dataset_json = os.path.join(args.data_dir, 'dataset.json')
     dataset_dict = json.load(open(dataset_json, 'r'))
-    target_size = (args.image_size, args.image_size)
+    #target_size = (args.image_size, args.image_size)
+    target_size = (args.model.image_size, args.model.image_size)
 
     mean = torch.Tensor([123.675, 116.28, 103.53]).view(-1, 1, 1)
     std = torch.Tensor([58.395, 57.12, 57.375]).view(-1, 1, 1)
 
-    if args.test_mode:
+    # if args.test_mode:
+    if args.model.test_mode:
         datalist = dataset_dict['test']
         collate_fn = test_collate_fn
         transform = transforms.Compose(
@@ -608,13 +613,13 @@ def get_loader(args):
         transform = transform
         )
 
-    sampler = DistributedSampler(dataset) if args.dist else None
+    sampler = DistributedSampler(dataset) if args.device.multi_gpu.enabled else None
 
     data_loader = data.DataLoader(
         dataset,
-        batch_size=args.batch_size,
+        batch_size=args.model.batch_size,
         shuffle=(sampler is None),
-        num_workers=args.num_workers,
+        num_workers=args.dataset.num_workers,
         sampler=sampler,
         pin_memory=True,
         persistent_workers=True,
@@ -655,7 +660,10 @@ def create_argument_parser():
 
 def main():
     setup_distributed_training()
-    config = create_argument_parser()
+
+    # config = create_argument_parser()
+    config = OmegaConf.load("./configs/dataset_test_config.yaml")
+    LoggingManager.print_config(config, "Configuration")
     
     loader = get_loader(config)
     # print(f"Dataset size: {len(dataset)} samples")

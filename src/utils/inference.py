@@ -41,17 +41,20 @@ def load_model(config: OmegaConf, device: torch.device):
     return imis_net, predictor
 
 
-def determine_device(config_device: Optional[str] = None, verbose: bool = True) -> torch.device:
+def determine_device(config: OmegaConf = None, verbose: bool = True) -> torch.device:
     """
     Determine the appropriate PyTorch device based on configuration and hardware availability.
     """
     # Determine device
-    if config_device:
-        device = torch.device(config_device)
+    if config.device.device:
+        device = torch.device(config.device.device)
     elif torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
+        
+    if config.device.multi_gpu.enabled:
+        config.device.world_size = config.device.multi_gpu.nodes * len(config.device.multi_gpu.gpu_ids)
 
     if verbose and torch.cuda.is_available():
         gpu_name = torch.cuda.get_device_name(0)
@@ -86,7 +89,7 @@ def run_interactive_demo(
     filename_stem = image_path.stem
 
     # Initialize model
-    device = determine_device(config.device.device)
+    device = determine_device(config)
     imis_net, predictor = load_model(config, device)
 
     # Initialize components

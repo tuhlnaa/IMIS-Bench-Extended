@@ -1,9 +1,6 @@
 # config/segmentation_config.yaml
 
 data_dir: "D:/Kai/DATA_Set_2/medical-segmentation/BTCV"
-checkpoint_path: 'output/checkpoint/IMISNet-B.pth'
-category_weights_path: 'dataloaders/categories_weight.pkl'
-pretrain_path: null
 
 # Device & distributed training parameters
 device:
