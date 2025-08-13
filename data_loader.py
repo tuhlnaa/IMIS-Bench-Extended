@@ -1,323 +1,570 @@
-import argparse
-import math
-import os
-import numpy as np
-import torch
-from monai import data, transforms
-import itertools
-from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import Dataset
 import os
 import ast
-from scipy import sparse
-import random
-from scipy.ndimage import binary_opening, binary_closing
-from scipy.ndimage import label as label_structure
-from scipy.ndimage import sum as sum_structure
 import json
+import torch
+import random
+import argparse
+
+import numpy as np
 import torch.distributed as dist
+
+from monai import data, transforms
+from scipy import sparse
+from scipy import ndimage
+from torch.utils.data import Dataset
+from torch.utils.data.distributed import DistributedSampler
+from typing import Dict, List, Tuple, Any
+from pathlib import Path
 from PIL import Image
 from dataloaders.data_utils import (
+    cleanse_pseudo_label,
     get_points_from_mask, 
     get_bboxes_from_mask
-    )
-import cv2
+)
 
 
 class UniversalDataset(Dataset):
-    def __init__(self, args, datalist, classes_list, transform):
-        self.data_dir = args.data_dir
+    """Universal dataset for medical image segmentation with interactive prompts.
+    
+    Supports both training and testing modes with different data processing pipelines.
+    """
+    def __init__(
+        self, 
+        args, 
+        datalist: List[Dict], 
+        classes_list: List[str], 
+        transform
+    ):
+        """Initialize the dataset.
+        
+        Args:
+            args: Configuration arguments containing data_dir, test_mode, image_size, mask_num
+            datalist: List of data items with image/label paths
+            classes_list: List of class names including 'background'
+            transform: Transform pipeline for data augmentation
+        """
+        self.data_dir = Path(args.data_dir)
         self.datalist = datalist
         self.test_mode = args.test_mode
-        classes_list.remove('background')
-        self.target_list = classes_list
         self.image_size = args.image_size
         self.mask_num = args.mask_num
         self.transform = transform
+        
+        # Remove background from target list
+        self.target_list = [c for c in classes_list if c != 'background']
 
-    def __len__(self):
+
+    def __len__(self) -> int:
         return len(self.datalist)
 
-    def __getitem__(self, idx):
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        """Get a single data sample.
+        
+        Args:
+            idx: Index of the sample
+            
+        Returns:
+            Dictionary containing processed image, labels, and prompts
+        """
         item_dict = self.datalist[idx]
-        image_path, label_path = os.path.join(self.data_dir, item_dict['image']), os.path.join(self.data_dir,item_dict['label'])
-    
-        # load image, label and pseudo
+        
+        # Load base data
+        try:
+            image_array, label_array = self._load_image_and_label(item_dict)
+        except Exception as e:
+            print(f"Error loading data at index {idx}: {e}")
+            return self._get_random_sample()
+        
+        if self.test_mode:
+            return self._process_test_sample(image_array, label_array, item_dict)
+        else:
+            return self._process_train_sample(image_array, label_array, item_dict)
+
+
+    def _load_image_and_label(self, item_dict: Dict) -> Tuple[np.ndarray, np.ndarray]:
+        """Load image and label arrays from disk."""
+        image_path = self.data_dir / item_dict['image']
+        label_path = self.data_dir / item_dict['label']
+        
+        # Load image
         image_array = np.array(Image.open(image_path))
         image_array = np.transpose(image_array, (2, 0, 1))
-        # print(image_array.dtype) # uint8
-
-        gt_shape = ast.literal_eval(label_path.split('.')[-2])
-        allmatrix_sp= sparse.load_npz(label_path)
+        
+        # Load sparse label
+        gt_shape = ast.literal_eval(str(label_path).split('.')[-2])
+        allmatrix_sp = sparse.load_npz(label_path)
         label_array = allmatrix_sp.toarray().reshape(gt_shape)
         label_array = np.squeeze(label_array, axis=-1)
 
-        if self.test_mode:
-            item_ori = {'image': image_array, 'label': label_array}
-            item = self.transform(item_ori)
-            _, H, W = item['image'].shape
+        return image_array, label_array
 
-            point_coords, point_labels, bboxes = [], [], []
 
-            label_ids = torch.sum(item['label'], dim=(1,2))
-            label_ids = torch.nonzero(label_ids != 0, as_tuple=True)[0].tolist()
+    def _process_test_sample(
+        self, 
+        image_array: np.ndarray, 
+        label_array: np.ndarray, 
+        item_dict: Dict
+    ) -> Dict[str, Any]:
+        """Process a sample for testing mode.
         
-            if len(label_ids) == 0:
-                return self.__getitem__(np.random.randint(self.__len__()))
-
-            # assert len(label_ids) >= 1, 'Please check the test data. The test data cannot be pure background.'
-
-            nonzero_labels = torch.zeros(len(label_ids), 1, H, W)
-            nonzero_category = []
-            nonzero_ori_labels = []
-            for idx, region_id in enumerate(label_ids):
-                nonzero_labels[idx][0] = item['label'][region_id]
-                # nonzero_ori_labels.append(torch.tensor(np.moveaxis(label_array[region_id], -1, 0)))
-                nonzero_ori_labels.append(torch.tensor(np.expand_dims(label_array[region_id], 0)))
-                
-                point_and_labels = get_points_from_mask(nonzero_labels[idx])
-                point_coords.append(torch.as_tensor(point_and_labels[0]))
-                point_labels.append(torch.as_tensor(point_and_labels[1]))
-
-                bboxes.append(torch.as_tensor(get_bboxes_from_mask(nonzero_labels[idx], offset=0)))
-
-                nonzero_category.append(self.target_list[region_id])
-
-            item['gt'] = nonzero_labels
-            item['ori_gt'] = torch.stack(nonzero_ori_labels, dim=0)
-
-            item['gt_target'] = nonzero_category
-            item['gt_point_coords'] = torch.stack(point_coords)
-            item['gt_point_labels'] = torch.stack(point_labels)
-            item['gt_bboxes'] = torch.stack(bboxes)
-
-            item['image_root'] = [image_path]
-         
-        else:
-            pseudo_path = os.path.join(self.data_dir, item_dict['imask'])
-
-            try:
-                pseudo_array = np.load(pseudo_path).astype(np.float32)
-                pseudo_array = np.transpose(pseudo_array, (2, 0, 1))
-            except:
-                print(f'{pseudo_path} not load')
-                return self.__getitem__(np.random.randint(self.__len__()))
-
-            item_ori = {'image': image_array, 'label': label_array, 'pseudo': pseudo_array}
-
-            # (512, 512, 3) (13, 512, 512, 1) (512, 512, 1)
-            # print(f"  Type: {image_array.dtype}, {label_array.dtype}, {pseudo_array.dtype}")
-            # print(f"  Range: [{image_array.min():.3f}, {image_array.max():.3f}]")
-            # print(image_array.shape, label_array.shape, pseudo_array.shape)
-
-            item = self.transform(item_ori)
-
-            # print(f"  Type: {item['image'].dtype}", item['label'].dtype, item['pseudo'].dtype)
-            # print(f"  Range: [{item['image'].min():.3f}, {item['image'].max():.3f}]")
-            # print(item['image'].shape, item['label'].shape, item['pseudo'].shape)
-            # torch.Size([3, 256, 256]) torch.Size([13, 256, 256]) torch.Size([1, 256, 256])
-
-            item['pseudo'] = self.cleanse_pseudo_label(item['pseudo'])
-
-            pseudo_ids = torch.unique(item['pseudo'])
-            pseudo_ids = pseudo_ids[pseudo_ids != -1]
-
-            if len(pseudo_ids) == 0:
-                return self.__getitem__(np.random.randint(self.__len__()))
-
-            _, H, W = item['image'].shape
-            select_pseudo = torch.zeros(self.mask_num, 1, H, W)
-
-            (
-                select_pseudo, 
-                point_coords_pseudo, 
-                point_labels_pseudo, 
-                bboxes_pseudo
-                ) = self.preprocess_pseudo(item['pseudo'], pseudo_ids, select_pseudo)
+        Args:
+            image_array: Input image array
+            label_array: Ground truth label array
+            item_dict: Original data dictionary
             
-
-            label_ids = torch.sum(item['label'], dim=(1,2))
-            label_ids = torch.nonzero(label_ids != 0, as_tuple=True)[0].tolist()
-
-            if len(label_ids) == 0:
-                return self.__getitem__(np.random.randint(self.__len__()))
-
-
-            select_labels = torch.zeros(self.mask_num, 1, H, W)
-            (
-                select_labels, 
-                point_coords, 
-                point_labels, 
-                bboxes, 
-                nonzero_category
-                ) = self. preprocess_label(item['label'], label_ids, select_labels)
-
-
-            item['gt'] = select_labels
-            item['pseudo'] = select_pseudo
-
-            item['gt_point_coords'] = point_coords
-            item['gt_point_labels'] = point_labels
-            item['gt_bboxes'] = bboxes
-            item['gt_target'] = nonzero_category
-            item['pseudo_point_coords'] = point_coords_pseudo
-            item['pseudo_point_labels'] = point_labels_pseudo
-            item['pseudo_bboxes'] = bboxes_pseudo
-
-        if type(item) == list:
-            assert len(item) == 1
-            item = item[0]
+        Returns:
+            Processed sample dictionary
+        """
+        # Apply transforms
+        item_ori = {'image': image_array, 'label': label_array}
+        data = self.transform(item_ori)
+        _, H, W = data['image'].shape
         
-        assert type(item) != list
-  
-        post_item = self.std_keys(item)
-        return post_item
-    
-    def get_preprocess_shape(self, oldh: int, oldw: int, long_side_length: int):
-        """
-        Compute the output size given input size and target long side length.
-        """
-        scale = long_side_length * 1.0 / max(oldh, oldw)
-        newh, neww = oldh * scale, oldw * scale
-        neww = int(neww + 0.5)
-        newh = int(newh + 0.5)
-        return (newh, neww)
+        # Find non-empty labels
+        label_ids = self._get_valid_label_ids(data['label'])
+        if len(label_ids) == 0:
+            return self._get_random_sample()
+        
+        # Process each valid label
+        processed_data = self._extract_test_annotations(
+            data['label'], 
+            label_array, 
+            label_ids, 
+            H, 
+            W
+        )
+        
+        # Update item with processed data
+        data.update(processed_data)
+        data['image_root'] = [str(self.data_dir / item_dict['image'])]
+        
+        return self._standardize_keys(data)
 
 
-    def preprocess_pseudo(self, pseudo_label, pseudo_ids, select_pseudo):
-        point_coords, point_labels, bboxes = [], [], []
-  
-        pseudo_region_ids = random.sample(list(pseudo_ids), k=self.mask_num) if len(pseudo_ids) >= self.mask_num else random.choices(list(pseudo_ids), k=self.mask_num)
+    def _process_train_sample(
+        self, 
+        image_array: np.ndarray, 
+        label_array: np.ndarray, 
+        item_dict: Dict
+    ) -> Dict[str, Any]:
+        """Process a sample for training mode.
+        
+        Args:
+            image_array: Input image array
+            label_array: Ground truth label array
+            item_dict: Original data dictionary
+            
+        Returns:
+            Processed sample dictionary
+        """
+        # Load pseudo labels
+        pseudo_path = self.data_dir / item_dict['imask']
+        try:
+            pseudo_array = np.load(pseudo_path).astype(np.float32)
+            pseudo_array = np.transpose(pseudo_array, (2, 0, 1))
+        except Exception as e:
+            print(f'Failed to load {pseudo_path}: {e}')
+            return self._get_random_sample()
+        
+        # Apply transforms
+        item_ori = {
+            'image': image_array, 
+            'label': label_array, 
+            'pseudo': pseudo_array
+        }
+        data = self.transform(item_ori)
+        
+        # Process pseudo labels
+        data['pseudo'] = cleanse_pseudo_label(data['pseudo'])
+        pseudo_ids = self._get_valid_pseudo_ids(data['pseudo'])
+        if len(pseudo_ids) == 0:
+            return self._get_random_sample()
+        
+        # Process ground truth labels
+        label_ids = self._get_valid_label_ids(data['label'])
+        if len(label_ids) == 0:
+            return self._get_random_sample()
+        
+        _, H, W = data['image'].shape
+        
+        # Process pseudo and ground truth masks
+        pseudo_data = self._process_pseudo_masks(data['pseudo'], pseudo_ids, H, W)
+        gt_data = self._process_gt_masks(data['label'], label_ids, H, W)
+        
+        # Update item
+        data.update({
+            'gt': gt_data['masks'],
+            'pseudo': pseudo_data['masks'],
+            'gt_point_coords': gt_data['point_coords'],
+            'gt_point_labels': gt_data['point_labels'],
+            'gt_bboxes': gt_data['bboxes'],
+            'gt_target': gt_data['categories'],
+            'pseudo_point_coords': pseudo_data['point_coords'],
+            'pseudo_point_labels': pseudo_data['point_labels'],
+            'pseudo_bboxes': pseudo_data['bboxes']
+        })
+        
+        return self._standardize_keys(data)
+
+
+    def _get_valid_label_ids(self, label: torch.Tensor) -> List[int]:
+        """Get indices of non-empty labels.
+        
+        Args:
+            label: Label tensor of shape (num_classes, H, W)
+            
+        Returns:
+            List of valid label indices
+        """
+        label_sums = torch.sum(label, dim=(1, 2))
+        return torch.nonzero(label_sums != 0, as_tuple=True)[0].tolist()
+
+
+    def _get_valid_pseudo_ids(self, pseudo: torch.Tensor) -> torch.Tensor:
+        """Get unique pseudo label IDs (excluding -1).
+        
+        Args:
+            pseudo: Pseudo label tensor
+            
+        Returns:
+            Tensor of valid pseudo IDs
+        """
+        pseudo_ids = torch.unique(pseudo)
+        return pseudo_ids[pseudo_ids != -1]
+
+
+    def _extract_test_annotations(
+        self, 
+        label: torch.Tensor, 
+        label_array: np.ndarray,
+        label_ids: List[int], 
+        H: int, 
+        W: int
+    ) -> Dict[str, Any]:
+        """Extract annotations for test samples.
+        
+        Args:
+            label: Transformed label tensor
+            label_array: Original label array
+            label_ids: List of valid label indices
+            H, W: Height and width of the image
+            
+        Returns:
+            Dictionary with extracted annotations
+        """
+        num_labels = len(label_ids)
+        nonzero_labels = torch.zeros(num_labels, 1, H, W)
+        nonzero_ori_labels = []
+        nonzero_category = []
+        point_coords = []
+        point_labels = []
+        bboxes = []
+
+        for idx, region_id in enumerate(label_ids):
+            # Extract mask
+            nonzero_labels[idx][0] = label[region_id]
+            nonzero_ori_labels.append(
+                torch.tensor(np.expand_dims(label_array[region_id], 0))
+            )
+
+            # Extract prompts
+            coords, labels = get_points_from_mask(nonzero_labels[idx])
+            point_coords.append(coords)
+            point_labels.append(labels)
+
+            box = get_bboxes_from_mask(nonzero_labels[idx], offset=0)
+            bboxes.append(box)
+            
+            nonzero_category.append(self.target_list[region_id])
+        
+        return {
+            'gt': nonzero_labels,
+            'ori_gt': torch.stack(nonzero_ori_labels, dim=0),
+            'gt_target': nonzero_category,
+            'gt_point_coords': torch.stack(point_coords),
+            'gt_point_labels': torch.stack(point_labels),
+            'gt_bboxes': torch.stack(bboxes)
+        }
+
+
+    def _process_pseudo_masks(
+        self, 
+        pseudo_label: torch.Tensor, 
+        pseudo_ids: torch.Tensor, 
+        H: int, 
+        W: int
+    ) -> Dict[str, torch.Tensor]:
+        """Process pseudo label masks and extract prompts.
+        
+        Args:
+            pseudo_label: Pseudo label tensor
+            pseudo_ids: Valid pseudo IDs
+            H, W: Height and width
+            
+        Returns:
+            Dictionary with masks and prompts
+        """
+        select_pseudo = torch.zeros(self.mask_num, 1, H, W)
+        point_coords = []
+        point_labels = []
+        bboxes = []
+        
+        # Sample pseudo regions
+        pseudo_region_ids = self._sample_regions(pseudo_ids, self.mask_num)
+        
         for idx, region_id in enumerate(pseudo_region_ids):
-            select_pseudo[idx][pseudo_label==region_id.item()] = 1
+            # Create mask
+            select_pseudo[idx][pseudo_label == region_id.item()] = 1
+            
+            # Extract prompts
+            coords, labels = get_points_from_mask(select_pseudo[idx])
+            point_coords.append(coords)
+            point_labels.append(labels)
+            bboxes.append(
+                torch.as_tensor(
+                    get_bboxes_from_mask(select_pseudo[idx], offset=5)
+                )
+            )
+        
+        return {
+            'masks': select_pseudo,
+            'point_coords': torch.stack(point_coords),
+            'point_labels': torch.stack(point_labels),
+            'bboxes': torch.stack(bboxes)
+        }
 
-            point_and_labels = get_points_from_mask(select_pseudo[idx])
-            point_coords.append(torch.as_tensor(point_and_labels[0]))
-            point_labels.append(torch.as_tensor(point_and_labels[1]))
 
-            bboxes.append(torch.as_tensor(get_bboxes_from_mask(select_pseudo[idx], offset=5)))
-
-        point_coords = torch.stack(point_coords)
-        point_labels = torch.stack(point_labels)
-        bboxes = torch.stack(bboxes)
-
-        return select_pseudo, point_coords, point_labels, bboxes
-
-    def preprocess_label(self, gt_label, label_ids, select_labels):
-        point_coords, point_labels, bboxes, categories = [], [], [], []
-        label_region_ids = random.sample(list(label_ids), k=self.mask_num) if len(label_ids) >= self.mask_num else random.choices(list(label_ids), k=self.mask_num)
+    def _process_gt_masks(
+        self, 
+        gt_label: torch.Tensor, 
+        label_ids: List[int], 
+        H: int, 
+        W: int
+    ) -> Dict[str, Any]:
+        """Process ground truth masks and extract prompts.
+        
+        Args:
+            gt_label: Ground truth label tensor
+            label_ids: Valid label indices
+            H, W: Height and width
+            
+        Returns:
+            Dictionary with masks, prompts, and categories
+        """
+        select_labels = torch.zeros(self.mask_num, 1, H, W)
+        point_coords = []
+        point_labels = []
+        bboxes = []
+        categories = []
+        
+        # Sample label regions
+        label_region_ids = self._sample_regions(label_ids, self.mask_num)
         
         for idx, region_id in enumerate(label_region_ids):
+            # Create mask
             select_labels[idx][0] = gt_label[region_id]
+            
+            # Extract prompts
+            coords, labels = get_points_from_mask(select_labels[idx])
+            point_coords.append(coords)
+            point_labels.append(labels)
 
-            point_and_labels = get_points_from_mask(select_labels[idx])
-            point_coords.append(torch.as_tensor(point_and_labels[0]))
-            point_labels.append(torch.as_tensor(point_and_labels[1]))
-
-            bboxes.append(torch.as_tensor(get_bboxes_from_mask(select_labels[idx], offset=5)))
+            box = get_bboxes_from_mask(select_labels[idx], offset=5)
+            bboxes.append(box)
             categories.append(self.target_list[region_id])
-
-        point_coords = torch.stack(point_coords)
-        point_labels = torch.stack(point_labels)
-        bboxes = torch.stack(bboxes)
-
-        return select_labels, point_coords, point_labels, bboxes, categories
-
-
-    def std_keys(self, post_item):
-        keys_to_remain = ['image', 'gt', 'ori_gt', 'image_root',  
-                          'gt_point_coords', 'gt_point_labels', 'gt_bboxes', 'gt_target', 
-                          'pseudo', 'pseudo_point_coords','pseudo_point_labels', 'pseudo_bboxes']
-        keys_to_remove = post_item.keys() - keys_to_remain
-        for key in keys_to_remove:
-            del post_item[key]
-        return post_item
+        
+        return {
+            'masks': select_labels,
+            'point_coords': torch.stack(point_coords),
+            'point_labels': torch.stack(point_labels),
+            'bboxes': torch.stack(bboxes),
+            'categories': categories
+        }
 
 
-    def cleanse_pseudo_label(self, pseudo_seg):
-        total_voxels = pseudo_seg.numel()
-        threshold = total_voxels * 0.0005
-        unique_values = torch.unique(pseudo_seg)
-
-        for value in unique_values:
-            voxel_count = (pseudo_seg == value).sum()
-            if voxel_count < threshold:
-                pseudo_seg[pseudo_seg == value] = -1
-
-        for label in torch.unique(pseudo_seg):
-            if label == -1:
-                continue
-
-            binary_mask = pseudo_seg == label
-            open = binary_opening(binary_mask.squeeze())
-            close = binary_closing(open)
-            processed_mask = torch.tensor(close)
-
-            labeled_mask, num_labels = label_structure(processed_mask)
-            label_sizes = sum_structure(processed_mask, labeled_mask, range(num_labels + 1))
-            small_labels = np.where(label_sizes < threshold)[0]
-            for label_del in small_labels:
-                processed_mask[labeled_mask == label_del] = False
-
-            pseudo_seg[binary_mask] = -1
-            pseudo_seg[processed_mask.unsqueeze(0)] = label
-
-        return pseudo_seg
+    def _sample_regions(
+        self, 
+        region_ids: List, 
+        k: int
+    ) -> List:
+        """Sample k regions from available IDs.
+        
+        Args:
+            region_ids: Available region IDs
+            k: Number of regions to sample
+            
+        Returns:
+            List of sampled region IDs
+        """
+        if len(region_ids) >= k:
+            return random.sample(list(region_ids), k=k)
+        return random.choices(list(region_ids), k=k)
 
 
-def test_collate_fn(batch):
-    assert len(batch) == 1, 'Please set batch size to 1 when testing mode'
-    gt_prompt = {'point_coords': [], 'point_labels': [], 'bboxes': []}
-    gt_prompt['point_coords'] = batch[0]['gt_point_coords']
-    gt_prompt['point_labels'] = batch[0]['gt_point_labels']
-    gt_prompt['bboxes'] = batch[0]['gt_bboxes']
-    image_root = batch[0]['image_root']
-    target_list = batch[0]['gt_target']
+    # def cleanse_pseudo_label(self, pseudo_seg: torch.Tensor) -> torch.Tensor:
+    #     """Clean pseudo labels by removing small regions and applying morphological operations.
+        
+    #     Args:
+    #         pseudo_seg: Pseudo segmentation tensor
+            
+    #     Returns:
+    #         Cleaned pseudo segmentation tensor
+    #     """
+    #     total_voxels = pseudo_seg.numel()
+    #     threshold = int(total_voxels * 0.0005)
+        
+    #     # Remove small regions globally
+    #     unique_values = torch.unique(pseudo_seg)
+    #     for value in unique_values:
+    #         if (pseudo_seg == value).sum() < threshold:
+    #             pseudo_seg[pseudo_seg == value] = -1
+        
+    #     # Apply morphological operations per label
+    #     for label in torch.unique(pseudo_seg):
+    #         if label == -1:
+    #             continue
+            
+    #         # Extract binary mask for current label
+    #         binary_mask = (pseudo_seg == label)
+            
+    #         # Apply morphological operations
+    #         opened = ndimage.binary_opening(binary_mask.squeeze().numpy())
+    #         closed = ndimage.binary_closing(opened)
+    #         processed_mask = torch.tensor(closed)
+            
+    #         # Remove small components
+    #         labeled_mask, num_labels = ndimage.label(processed_mask)
+    #         if num_labels > 0:
+    #             label_sizes = ndimage.sum(
+    #                 processed_mask, 
+    #                 labeled_mask, 
+    #                 range(num_labels + 1)
+    #             )
+    #             small_labels = np.where(label_sizes < threshold)[0]
+    #             for small_label in small_labels:
+    #                 processed_mask[labeled_mask == small_label] = False
+            
+    #         # Update pseudo segmentation
+    #         pseudo_seg[binary_mask] = -1
+    #         pseudo_seg[processed_mask.unsqueeze(0)] = label
+    #     return pseudo_seg
+
+
+    def _standardize_keys(self, item: Dict) -> Dict:
+        """Keep only necessary keys in the output dictionary.
+        
+        Args:
+            item: Input dictionary
+            
+        Returns:
+            Dictionary with standardized keys
+        """
+        keys_to_keep = {
+            'image', 'gt', 'ori_gt', 'image_root',
+            'gt_point_coords', 'gt_point_labels', 'gt_bboxes', 'gt_target',
+            'pseudo', 'pseudo_point_coords', 'pseudo_point_labels', 'pseudo_bboxes'
+        }
+        return {k: v for k, v in item.items() if k in keys_to_keep}
+
+
+    def _get_random_sample(self) -> Dict:
+        """Get a random valid sample (used for error recovery).
+        
+        Returns:
+            A valid sample dictionary
+        """
+        return self.__getitem__(random.randint(0, len(self) - 1))
+
+
+def test_collate_fn(batch: List[Dict]) -> Dict[str, Any]:
+    """Collate function for test dataloader.
+    
+    Args:
+        batch: List of sample dictionaries (should contain only 1 item)
+        
+    Returns:
+        Collated batch dictionary
+        
+    Raises:
+        AssertionError: If batch size is not 1
+    """
+    assert len(batch) == 1, 'Batch size must be 1 in test mode'
+    
+    sample = batch[0]
+    gt_prompt = {
+        'point_coords': sample['gt_point_coords'],
+        'point_labels': sample['gt_point_labels'],
+        'bboxes': sample['gt_bboxes']
+    }
+    
     return {
-        'image': batch[0]['image'].unsqueeze(0),
-        'label': batch[0]['gt'],
-        'ori_label': batch[0]['ori_gt'],
+        'image': sample['image'].unsqueeze(0),
+        'label': sample['gt'],
+        'ori_label': sample['ori_gt'],
         'gt_prompt': gt_prompt,
-        'target_list': target_list,
-        'image_root': image_root
+        'target_list': sample['gt_target'],
+        'image_root': sample['image_root']
     }
 
 
-
-def train_collate_fn(batch):
-    images, labels, pseudos, target_list = [], [], [], []
+def train_collate_fn(batch: List[Dict]) -> Dict[str, Any]:
+    """Collate function for training dataloader.
+    
+    Args:
+        batch: List of sample dictionaries
+        
+    Returns:
+        Collated batch dictionary with combined tensors
+    """
+    # Initialize collectors
+    images = []
+    labels = []
+    pseudos = []
+    target_list = []
     gt_prompt = {'point_coords': [], 'point_labels': [], 'bboxes': []}
     pseudo_prompt = {'point_coords': [], 'point_labels': [], 'bboxes': []}
     
+    # Collect from each sample
     for sample in batch:
         images.append(sample['image'])
         labels.append(sample['gt'])
+        pseudos.append(sample['pseudo'])
+        target_list.extend(sample['gt_target'])
+        
+        # Collect GT prompts
         gt_prompt['point_coords'].append(sample['gt_point_coords'])
         gt_prompt['point_labels'].append(sample['gt_point_labels'])
         gt_prompt['bboxes'].append(sample['gt_bboxes'])
-        target_list += sample['gt_target']
-
-        pseudos.append(sample['pseudo'])
+        
+        # Collect pseudo prompts
         pseudo_prompt['point_coords'].append(sample['pseudo_point_coords'])
         pseudo_prompt['point_labels'].append(sample['pseudo_point_labels'])
         pseudo_prompt['bboxes'].append(sample['pseudo_bboxes'])
-
+    
+    # Stack/concatenate tensors
     images = torch.stack(images, dim=0)
     labels = torch.cat(labels, dim=0)
     pseudos = torch.cat(pseudos, dim=0)
     
-    gt_prompt = {key: torch.cat(value, dim=0) if len(value) !=0 else None for key, value in gt_prompt.items()}
-    pseudo_prompt = {key: torch.cat(value, dim=0) if len(value) !=0 else None for key, value in pseudo_prompt.items()}
-
+    # Concatenate prompt tensors
+    gt_prompt = {
+        key: torch.cat(value, dim=0) if value else None 
+        for key, value in gt_prompt.items()
+    }
+    pseudo_prompt = {
+        key: torch.cat(value, dim=0) if value else None 
+        for key, value in pseudo_prompt.items()
+    }
+    
     return {
         'image': images,
         'label': labels,
         'pseudo': pseudos,
         'target_list': target_list,
         'gt_prompt': gt_prompt,
-        'pseudo_prompt': pseudo_prompt,
+        'pseudo_prompt': pseudo_prompt
     }
-        
 
 
 def get_loader(args):

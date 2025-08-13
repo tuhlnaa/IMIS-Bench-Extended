@@ -1,11 +1,11 @@
 
+from scipy import ndimage
 import torch
 import numpy as np
 
 from torch.nn import functional as F
 from typing import  Tuple, Union
 from monai import transforms
-
 
 
 class LongestSidePadding(transforms.Transform):
@@ -131,6 +131,133 @@ def get_bboxes_from_mask(
             bounding_boxes.append([x0, y0, x1, y1])
     
     return torch.tensor(bounding_boxes, dtype=torch.float).unsqueeze(1)
+
+
+# def cleanse_pseudo_label(pseudo_seg: torch.Tensor) -> torch.Tensor:
+#     """Clean pseudo labels by removing small regions and applying morphological operations.
+    
+#     Args:
+#         pseudo_seg: Pseudo segmentation tensor
+        
+#     Returns:
+#         Cleaned pseudo segmentation tensor
+#     """
+#     total_voxels = pseudo_seg.numel()
+#     threshold = int(total_voxels * 0.0005)
+    
+#     # Remove small regions globally
+#     unique_values = torch.unique(pseudo_seg)
+#     for value in unique_values:
+#         if (pseudo_seg == value).sum() < threshold:
+#             pseudo_seg[pseudo_seg == value] = -1
+    
+#     # Apply morphological operations per label
+#     for label in torch.unique(pseudo_seg):
+#         if label == -1:
+#             continue
+        
+#         # Extract binary mask for current label
+#         binary_mask = (pseudo_seg == label)
+        
+#         # Apply morphological operations
+#         opened = ndimage.binary_opening(binary_mask.squeeze().numpy())
+#         closed = ndimage.binary_closing(opened)
+#         processed_mask = torch.tensor(closed)
+        
+#         # Remove small components
+#         labeled_mask, num_labels = ndimage.label(processed_mask)
+#         if num_labels > 0:
+#             label_sizes = ndimage.sum(
+#                 processed_mask, 
+#                 labeled_mask, 
+#                 range(num_labels + 1)
+#             )
+#             small_labels = np.where(label_sizes < threshold)[0]
+#             for small_label in small_labels:
+#                 processed_mask[labeled_mask == small_label] = False
+        
+#         # Update pseudo segmentation
+#         pseudo_seg[binary_mask] = -1
+#         pseudo_seg[processed_mask.unsqueeze(0)] = label
+
+#     return pseudo_seg
+
+
+def cleanse_pseudo_label(pseudo_seg: torch.Tensor) -> torch.Tensor:
+    """
+    Clean pseudo labels by removing small regions and applying morphological operations.
+
+    Args:
+        pseudo_seg: Pseudo segmentation tensor of shape (1, H, W) or (H, W)
+       
+    Returns:
+        Cleaned pseudo segmentation tensor with same shape as input
+    """
+    device = pseudo_seg.device
+    original_shape = pseudo_seg.shape
+    
+    # Ensure 2D for processing
+    if pseudo_seg.dim() > 2:
+        pseudo_seg_2d = pseudo_seg.squeeze()
+    else:
+        pseudo_seg_2d = pseudo_seg
+    
+    # Convert to numpy once for all operations
+    seg_np = pseudo_seg_2d.cpu().numpy()
+    
+    # Calculate threshold
+    total_voxels = seg_np.size
+    threshold = max(1, int(total_voxels * 0.0005))
+    
+    # Get unique labels and their counts in one pass
+    unique_labels, counts = np.unique(seg_np, return_counts=True)
+    
+    # Filter out small regions globally
+    valid_mask = counts >= threshold
+    valid_labels = unique_labels[valid_mask]
+    
+    # Create output array initialized to background
+    cleaned_seg = np.full_like(seg_np, -1)
+    
+    # Process each valid label
+    for label in valid_labels:
+        if label == -1:  # Skip background
+            cleaned_seg[seg_np == -1] = -1
+            continue
+            
+        # Extract binary mask for current label
+        binary_mask = (seg_np == label)
+        
+        # Skip if empty mask
+        if not binary_mask.any():
+            continue
+            
+        # Apply morphological operations
+        opened = ndimage.binary_opening(binary_mask)
+        closed = ndimage.binary_closing(opened)
+        
+        # Remove small connected components
+        labeled_mask, num_labels = ndimage.label(closed)
+        
+        if num_labels == 0:
+            continue
+        
+        # Vectorized component size calculation and filtering
+        component_sizes = np.bincount(labeled_mask.ravel())[1:]  # Skip background (0)
+        valid_components = np.where(component_sizes >= threshold)[0] + 1  # +1 for label offset
+        
+        # Create final mask and update segmentation
+        if len(valid_components) > 0:
+            final_mask = np.isin(labeled_mask, valid_components)
+            cleaned_seg[final_mask] = label
+    
+    # Convert back to tensor and restore original shape
+    result = torch.from_numpy(cleaned_seg).to(device)
+    
+    if result.shape != original_shape:
+        result = result.view(original_shape)
+    
+    return result
 
 
 def main():
