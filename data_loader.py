@@ -45,7 +45,7 @@ class UniversalDataset(Dataset):
         # load image, label and pseudo
         image_array = np.array(Image.open(image_path))
         image_array = np.transpose(image_array, (2, 0, 1))
-        print(image_array.dtype)
+        # print(image_array.dtype) # uint8
 
         gt_shape = ast.literal_eval(label_path.split('.')[-2])
         allmatrix_sp= sparse.load_npz(label_path)
@@ -75,7 +75,7 @@ class UniversalDataset(Dataset):
                 # nonzero_ori_labels.append(torch.tensor(np.moveaxis(label_array[region_id], -1, 0)))
                 nonzero_ori_labels.append(torch.tensor(np.expand_dims(label_array[region_id], 0)))
                 
-                point_and_labels = get_points_from_mask(nonzero_labels[idx], top_num=0.5)
+                point_and_labels = get_points_from_mask(nonzero_labels[idx])
                 point_coords.append(torch.as_tensor(point_and_labels[0]))
                 point_labels.append(torch.as_tensor(point_and_labels[1]))
 
@@ -191,7 +191,7 @@ class UniversalDataset(Dataset):
         for idx, region_id in enumerate(pseudo_region_ids):
             select_pseudo[idx][pseudo_label==region_id.item()] = 1
 
-            point_and_labels = get_points_from_mask(select_pseudo[idx], top_num=0.5)
+            point_and_labels = get_points_from_mask(select_pseudo[idx])
             point_coords.append(torch.as_tensor(point_and_labels[0]))
             point_labels.append(torch.as_tensor(point_and_labels[1]))
 
@@ -210,7 +210,7 @@ class UniversalDataset(Dataset):
         for idx, region_id in enumerate(label_region_ids):
             select_labels[idx][0] = gt_label[region_id]
 
-            point_and_labels = get_points_from_mask(select_labels[idx], top_num=0.5)
+            point_and_labels = get_points_from_mask(select_labels[idx])
             point_coords.append(torch.as_tensor(point_and_labels[0]))
             point_labels.append(torch.as_tensor(point_and_labels[1]))
 
