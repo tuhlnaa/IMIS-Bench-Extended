@@ -272,11 +272,13 @@ class BaseTrainer:
             if torch.sum(labels) == 0 or torch.sum(pseudos) == 0:
                 continue
             
-            self.text_prompt = model.process_text_prompt(self.target_list)
+            #self.text_prompt = model.process_text_prompt(self.target_list)
+            self.text_prompt = model.text_tokenizer(self.target_list)
 
             self.img_shape = images.shape
-            image_embedding = model.image_forward(images)
-   
+            #image_embedding = model.image_forward(images)
+            image_embedding = model.encode_image(images)
+
             gt_prm = random.choices(['bboxes', 'points', 'text'], [0.4, 0.3, 0.3])[0]  #supervised specify prompt
             pse_prm = random.choices(['bboxes', 'points'], [0.5, 0.5])[0]
 

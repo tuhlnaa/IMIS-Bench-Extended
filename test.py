@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import os
 import csv
 import ast
+
 join = os.path.join
 from tqdm import tqdm
 from torch.backends import cudnn
@@ -19,6 +20,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 import datetime
 import logging
+from rich.logging import RichHandler
 from model import IMISNet
 from utils import FocalDice_MSELoss
 from torch.nn import CrossEntropyLoss
@@ -26,13 +28,17 @@ import warnings
 import re
 from data_loader import get_loader 
 
+# Import custom modules
+from configs.config import parse_args
+from src.utils.inference import load_model
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--work_dir', type=str, default='work_dir')
 parser.add_argument('--task_name', type=str, default='ft-IMISNet')
 #load data
-parser.add_argument("--data_dir", type = str, default='dataset/BTCV')
+parser.add_argument("--data_dir", type = str, default="D:/Kai/DATA_Set_2/medical-segmentation/BTCV")
 parser.add_argument('--image_size', type=int, default=1024)
 parser.add_argument('--test_mode', type=bool, default=True)
 parser.add_argument('--batch_size', type=int, default=1)
@@ -53,6 +59,14 @@ parser.add_argument('-num_workers', type=int, default=1)
 
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = ','.join([str(i) for i in args.gpu_ids])
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,  # DEBUG INFO
+    # format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", 
+    format="%(message)s", 
+    handlers=[RichHandler()]
+)
 
 logger = logging.getLogger(__name__)
 LOG_OUT_DIR = join(args.work_dir, args.task_name)
@@ -132,7 +146,9 @@ class BaseTester:
         with torch.no_grad():
             for inter in range(self.args.inter_num-1):
                 prompts = model.supervised_prompts(None, labels, mask_preds, low_masks, 'points')
-                outputs = model.forward_decoder(image_embedding, prompts)
+                #outputs = model.forward_decoder(image_embedding, prompts)
+                outputs = model.decode_masks(image_embedding, prompts)
+                
                 mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
             loss = self.seg_loss(mask_preds, labels.float(), outputs['iou_pred'])
         return loss, mask_preds
@@ -159,8 +175,10 @@ class BaseTester:
             gt_prompt = batch_input["gt_prompt"]
             image_root = batch_input["image_root"][0]
       
-            text_prompt = model.process_text_prompt(target_list)
-            image_embedding = model.image_forward(images)
+            #text_prompt = model.process_text_prompt(target_list)
+            text_prompt = model.text_tokenizer(target_list)
+            #image_embedding = model.image_forward(images)
+            image_embedding = model.encode_image(images)
 
             test_prompts = {}
             image_level_metrics = {'loss':[],'iou':[],'dice':[],'category_pred':[]}
@@ -178,7 +196,9 @@ class BaseTester:
                     print('Please setting correct prompt mode')
 
                 with torch.no_grad():
-                    outputs = model.forward_decoder(image_embedding, test_prompts)
+                    #outputs = model.forward_decoder(image_embedding, test_prompts)
+                    outputs = model.decode_masks(image_embedding, test_prompts)
+                    
                     mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
                     loss = self.seg_loss(mask_preds, labels_cls.float(), outputs['iou_pred'])
           
@@ -240,6 +260,8 @@ def device_config(args):
         print(e)
 
 def main():
+    config = parse_args()
+    
     print('*'*100)
     for key, value in vars(args).items():
         print(key + ': ' + str(value))
@@ -253,7 +275,8 @@ def main():
         np.random.seed(42)
         torch.manual_seed(42)
         dataloaders = get_loader(args)
-        model = build_model(args)
+        #model = build_model(args)
+        model, _ = load_model(config, device)
         tester = BaseTester(model, dataloaders, args)
         tester.test()
 
@@ -283,10 +306,13 @@ def main_worker(rank, args):
 def setup(rank, world_size):
     os.environ['MASTER_ADDR'] = '127.0.0.1'
     os.environ['MASTER_PORT'] = f'{args.port}'
-    dist.init_process_group(backend='NCCL', init_method='env://', rank=rank, world_size=world_size)
+    # Change from 'NCCL' to 'gloo' for Windows
+    dist.init_process_group(backend='gloo', init_method='env://', rank=rank, world_size=world_size)
 
 def cleanup():
     dist.destroy_process_group()
 
 if __name__ == '__main__':
+    # Add this line for Windows multiprocessing
+    mp.set_start_method('spawn', force=True)
     main()

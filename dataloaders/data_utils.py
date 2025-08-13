@@ -12,62 +12,6 @@ from torchvision.transforms import InterpolationMode
 from torchvision.transforms.functional import resize, to_pil_image  # type: ignore
 from typing import Dict, List, Tuple, Union, Any
 
-
-class Resize(transforms.Transform):
-    def __init__(self, keys, target_size):
-        self.keys = keys
-        self.target_size = target_size
-
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.keys:
-            if len(d[key].shape) == 4:
-                label = d[key]
-                resized_labels = np.zeros((label.shape[0], self.target_size[0], self.target_size[1]))
-                for i in range(label.shape[0]):
-                    pil_label = to_pil_image(label[i])
-                    resized_label = resize(pil_label, self.target_size, interpolation=InterpolationMode.NEAREST)
-                    resized_labels[i] = np.array(resized_label)
-                d[key] = resized_labels
-            else:
-                image = to_pil_image(d[key])
-                d[key] = resize(image, self.target_size, interpolation=InterpolationMode.NEAREST)
-                d[key] = np.array(d[key])
-            
-            if len(d[key].shape) == 2:
-                d[key] = d[key][np.newaxis, ...]
-        return d
-
-
-class PermuteTransform(transforms.Transform):
-    """
-    Permute dimensions of arrays in dictionary data.
-    
-    Useful for converting between different dimension orderings
-    (e.g., channels-first to channels-last).
-    
-    Args:
-        keys: Keys of the data dictionary to be permuted
-        dims: New dimension ordering (e.g., (1, 2, 0) for HWC from CHW)
-    """
-    
-    def __init__(self, keys: KeysCollection, dims: Tuple[int, ...]):
-        self.keys = ensure_tuple(keys)
-        self.dims = dims
-
-    def __call__(self, data: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-        """Apply permute transformation to specified keys."""
-        d = dict(data)
-        
-        for key in self.keys:
-            if key in d:
-                d[key] = np.transpose(d[key], self.dims)
-            else:
-                raise KeyError(f"Key '{key}' not found in data dictionary")
-                
-        return d
-    
-
 class LongestSidePadding(transforms.Transform):
     def __init__(self, keys, input_size):
         self.keys = keys
@@ -79,19 +23,6 @@ class LongestSidePadding(transforms.Transform):
             padh = self.input_size - h
             padw = self.input_size - w
             d[key] = F.pad(d[key], (0, padw, 0, padh))
-        return d
-
-class Normalization(transforms.Transform):
-    def __init__(self, keys):
-        self.keys = keys
-        pixel_mean = (123.675, 116.28, 103.53)
-        pixel_std = (58.395, 57.12, 57.375)
-        self.pixel_mean = torch.Tensor(pixel_mean).view(-1, 1, 1)
-        self.pixel_std = torch.Tensor(pixel_std).view(-1, 1, 1)
-    def __call__(self, data):
-        d = dict(data)
-        for key in self.keys:
-            d[key] = (d[key] - self.pixel_mean) / self.pixel_std
         return d
     
 

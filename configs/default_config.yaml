@@ -3,8 +3,12 @@
 checkpoint_path: 'output/checkpoint/IMISNet-B.pth'
 category_weights_path: 'dataloaders/categories_weight.pkl'
 
-# Device configuration - leave null for auto-detection
-device: null  # or 'cuda', 'cpu'
+# Device & distributed training parameters
+device:
+  device: "cuda"   # Device to use: "cpu", "cuda:0", etc. (leave null for auto-detection)
+  multi_gpu:
+    enabled: false
+    rank: 0  # GPU rank for distributed training
 
 # Model configuration
 model:

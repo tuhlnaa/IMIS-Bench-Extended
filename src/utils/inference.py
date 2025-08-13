@@ -7,8 +7,9 @@ from omegaconf import OmegaConf
 from pathlib import Path
 from PIL import Image
 from rich import print
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 from typing import Dict, Any, List, Tuple
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 # Import custom modules
 from model import IMISNet
@@ -27,7 +28,10 @@ def load_model(config: OmegaConf, device: torch.device):
             test_mode=config.model.test_mode, 
             category_weights=config.category_weights_path
         ).to(device)
-        
+
+        if config.device.multi_gpu.enabled:
+            imis = DDP(imis, device_ids=[config.device.multi_gpu.rank], output_device=config.device.multi_gpu.rank)
+
         predictor = IMISPredictor(imis_net, imis_net.encode_image, imis_net.decode_masks)
         print(f"[blue]Model loaded successfully on {device}[/blue]")
         
@@ -82,7 +86,7 @@ def run_interactive_demo(
     filename_stem = image_path.stem
 
     # Initialize model
-    device = determine_device(config.device)
+    device = determine_device(config.device.device)
     imis_net, predictor = load_model(config, device)
 
     # Initialize components

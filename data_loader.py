@@ -1,3 +1,4 @@
+import argparse
 import math
 import os
 import numpy as np
@@ -17,10 +18,6 @@ import json
 import torch.distributed as dist
 from PIL import Image
 from dataloaders.data_utils import (
-    Resize, 
-    PermuteTransform, 
-    LongestSidePadding, 
-    Normalization, 
     get_points_from_mask, 
     get_bboxes_from_mask
     )
@@ -47,10 +44,13 @@ class UniversalDataset(Dataset):
     
         # load image, label and pseudo
         image_array = np.array(Image.open(image_path))
+        image_array = np.transpose(image_array, (2, 0, 1))
+        print(image_array.dtype)
 
         gt_shape = ast.literal_eval(label_path.split('.')[-2])
         allmatrix_sp= sparse.load_npz(label_path)
         label_array = allmatrix_sp.toarray().reshape(gt_shape)
+        label_array = np.squeeze(label_array, axis=-1)
 
         if self.test_mode:
             item_ori = {'image': image_array, 'label': label_array}
@@ -72,8 +72,9 @@ class UniversalDataset(Dataset):
             nonzero_ori_labels = []
             for idx, region_id in enumerate(label_ids):
                 nonzero_labels[idx][0] = item['label'][region_id]
-                nonzero_ori_labels.append(torch.tensor(np.moveaxis(label_array[region_id], -1, 0)))
-
+                # nonzero_ori_labels.append(torch.tensor(np.moveaxis(label_array[region_id], -1, 0)))
+                nonzero_ori_labels.append(torch.tensor(np.expand_dims(label_array[region_id], 0)))
+                
                 point_and_labels = get_points_from_mask(nonzero_labels[idx], top_num=0.5)
                 point_coords.append(torch.as_tensor(point_and_labels[0]))
                 point_labels.append(torch.as_tensor(point_and_labels[1]))
@@ -97,12 +98,25 @@ class UniversalDataset(Dataset):
 
             try:
                 pseudo_array = np.load(pseudo_path).astype(np.float32)
+                pseudo_array = np.transpose(pseudo_array, (2, 0, 1))
             except:
                 print(f'{pseudo_path} not load')
                 return self.__getitem__(np.random.randint(self.__len__()))
 
             item_ori = {'image': image_array, 'label': label_array, 'pseudo': pseudo_array}
+
+            # (512, 512, 3) (13, 512, 512, 1) (512, 512, 1)
+            # print(f"  Type: {image_array.dtype}, {label_array.dtype}, {pseudo_array.dtype}")
+            # print(f"  Range: [{image_array.min():.3f}, {image_array.max():.3f}]")
+            # print(image_array.shape, label_array.shape, pseudo_array.shape)
+
             item = self.transform(item_ori)
+
+            # print(f"  Type: {item['image'].dtype}", item['label'].dtype, item['pseudo'].dtype)
+            # print(f"  Range: [{item['image'].min():.3f}, {item['image'].max():.3f}]")
+            # print(item['image'].shape, item['label'].shape, item['pseudo'].shape)
+            # torch.Size([3, 256, 256]) torch.Size([13, 256, 256]) torch.Size([1, 256, 256])
+
             item['pseudo'] = self.cleanse_pseudo_label(item['pseudo'])
 
             pseudo_ids = torch.unique(item['pseudo'])
@@ -312,27 +326,27 @@ def get_loader(args):
     dataset_dict = json.load(open(dataset_json, 'r'))
     target_size = (args.image_size, args.image_size)
 
+    mean = torch.Tensor([123.675, 116.28, 103.53]).view(-1, 1, 1)
+    std = torch.Tensor([58.395, 57.12, 57.375]).view(-1, 1, 1)
+
     if args.test_mode:
         datalist = dataset_dict['test']
         collate_fn = test_collate_fn
         transform = transforms.Compose(
                         [
-                            Resize(keys=["image", "label"], target_size=target_size), 
-                            PermuteTransform(keys=["image"], dims=(2,0,1)),
                             transforms.ToTensord(keys=["image", "label"]),
-                            Normalization(keys=["image"]),
+                            transforms.NormalizeIntensityd(keys=["image"], subtrahend=mean, divisor=std),
+                            transforms.Resized(keys=["image", "label"], spatial_size=target_size, mode="nearest"),
                         ]
                     )
-
     else:
         datalist = dataset_dict['training']
         collate_fn = train_collate_fn
         transform = transforms.Compose(
                 [
-                    Resize(keys=["image", "label", "pseudo"], target_size=target_size),  #
-                    PermuteTransform(keys=["image"], dims=(2,0,1)),
                     transforms.ToTensord(keys=["image", "label", "pseudo"]),
-                    Normalization(keys=["image"]),
+                    transforms.NormalizeIntensityd(keys=["image"], subtrahend=mean, divisor=std),
+                    transforms.Resized(keys=["image", "label", "pseudo"], spatial_size=target_size, mode="nearest"),
                     transforms.RandScaleIntensityd(keys="image", factors=0.2, prob=0.2),
                     transforms.RandShiftIntensityd(keys="image", offsets=0.2, prob=0.2),
                 ]
@@ -362,42 +376,88 @@ def get_loader(args):
 
     return data_loader
 
-if __name__ == "__main__":
-    # Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline
+
+def setup_distributed_training():
+    """Setup distributed training environment."""
     os.environ["USE_LIBUV"] = "0"
-    import argparse
-    dist.init_process_group(backend='gloo', init_method='tcp://localhost:23456', rank=0, world_size=1)
-    def set_parse():
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--data_dir", type=str, default="D:/Kai/DATA_Set_2/medical-segmentation/BTCV")
-        parser.add_argument('--image_size', type=int, default=256)
-        parser.add_argument('--test_mode', type=bool, default=False)
-        parser.add_argument('--batch_size', type=int, default=4)
-        parser.add_argument('--dist', dest='dist', type=bool, default=True,help='distributed training or not')
-        parser.add_argument('--num_workers', type=int, default=1)
-        parser.add_argument('--mask_num', type=int, default=5)
-        args = parser.parse_args()
-        return args
-    args = set_parse()
-    train_loader = get_loader(args)
+    
+    if not dist.is_initialized():
+        dist.init_process_group(
+            backend='gloo',
+            init_method='tcp://localhost:23456',
+            rank=0,
+            world_size=1
+        )
 
+
+def create_argument_parser():
+    """Create and configure argument parser."""
+    parser = argparse.ArgumentParser(description="Medical Image Segmentation Data Loader")
+    
+    parser.add_argument("--data_dir", type=str, default="D:/Kai/DATA_Set_2/medical-segmentation/BTCV", help="Path to dataset directory")
+    parser.add_argument('--image_size', type=int, default=256, help="Target image size for resizing")
+    parser.add_argument('--test_mode', type=bool, default=False, help='Use test dataset instead of training dataset')
+    parser.add_argument('--batch_size', type=int, default=4, help="Batch size for data loading")
+    parser.add_argument('--dist', type=bool, default=True, help='Enable distributed training')
+    parser.add_argument('--num_workers', type=int, default=1,help="Number of worker processes for data loading")
+    parser.add_argument('--mask_num', type=int, default=5, help="Number of masks")
+
+    parsed_args = parser.parse_args()
+    return parsed_args
+
+
+def main():
+    setup_distributed_training()
+    config = create_argument_parser()
+    
+    loader = get_loader(config)
     # print(f"Dataset size: {len(dataset)} samples")
-    print(f"Number of batches: {len(train_loader)}\n")
+    print(f"Number of batches: {len(loader)}\n")
 
-    for batch_idx, batch in enumerate(train_loader):  
-        image, label = batch["image"], batch["label"]
+    for batch_idx, batch in enumerate(loader):
+        image = batch["image"]
+        label = batch["label"]
         bbox = batch['gt_prompt']['bboxes']
         # pseudo = batch['pseudo']
-
+        
         print(f"Batch {batch_idx + 1}:")
         print(f"  Image shape: {image.shape}")
         print(f"  Label shape: {label.shape}")
         print(f"  Bounding Box shape: {bbox.shape}")
         # print(f"  Pseudo shape: {batch['pseudo'].shape}")
-        print(f"  Data type: {image.dtype}\n")
 
-        print(batch['target_list'])
+        print(f"  Data type: {image.dtype}")
+        print(f"  Data range: {image.max()}, {image.min()}")
+
+        print(f"  Target Box size: {len(batch['target_list'])}")
+        print(f"  Target list: {batch['target_list']}\n")
         
-        # Only show first 3 batches
-        if batch_idx >= 2:
+        # Only show first 2 batches
+        if batch_idx >= 1:
             break
+
+
+if __name__ == "__main__":
+    main()
+
+"""
+Number of batches: 480
+
+Batch 1:
+  Image shape: torch.Size([4, 3, 256, 256])
+  Label shape: torch.Size([20, 1, 256, 256])
+  Bounding Box shape: torch.Size([20, 1, 1, 4])
+  Data type: torch.float32
+  Data range: 2.98840069770813, -2.4133365154266357
+  Target Box size: 20
+  Target list: ['inferior_vena_cava', 'aorta', 'aorta', 'aorta', 'esophagus', 'liver', 'liver', 'liver', 'inferior_vena_cava', 'inferior_vena_cava', 'aorta', 'inferior_vena_cava', 'inferior_vena_cava', 'inferior_vena_cava', 'inferior_vena_cava', 'inferior_vena_cava', 'pancreas', 'stomach', 'liver', 'kidney_left']
+
+Batch 2:
+  Image shape: torch.Size([4, 3, 256, 256])
+  Label shape: torch.Size([20, 1, 256, 256])
+  Bounding Box shape: torch.Size([20, 1, 1, 4])
+  Data type: torch.float32
+  Data range: 2.622570753097534, -2.1179039478302
+  Target Box size: 20
+  Target list: ['kidney_left', 'liver', 'spleen', 'gallbladder', 'inferior_vena_cava', 'kidney_left', 'aorta', 'inferior_vena_cava', 'kidney_right', 'liver', 'pancreas', 'aorta', 'inferior_vena_cava', 'gallbladder', 'kidney_left', 'aorta', 'aorta', 'aorta', 'esophagus', 'esophagus']
+"""
