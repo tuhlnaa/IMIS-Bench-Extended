@@ -20,7 +20,7 @@ import datetime
 import logging
 from data_loader import get_loader 
 from model import IMISNet
-from utils import FocalDice_MSELoss
+from utils import FocalDiceMSELoss
 from torch.nn import CrossEntropyLoss
 import re
 import warnings
@@ -95,7 +95,7 @@ class BaseTrainer:
             self.start_epoch = 0
 
     def set_loss_fn(self):
-        self.seg_loss = FocalDice_MSELoss()
+        self.seg_loss = FocalDiceMSELoss()
         self.ce_loss = CrossEntropyLoss()
 
     def set_optimizer(self):

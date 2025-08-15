@@ -68,9 +68,9 @@ class MaskMSE(nn.Module):
         return mse
 
 
-class FocalDice_MSELoss(nn.Module):
+class FocalDiceMSELoss(nn.Module):
     def __init__(self, weight=20.0, iou_scale=1.0):
-        super(FocalDice_MSELoss, self).__init__()
+        super(FocalDiceMSELoss, self).__init__()
         self.weight = weight
         self.iou_scale = iou_scale
         self.focal_loss = FocalLoss()

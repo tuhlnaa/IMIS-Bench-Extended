@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+from typing import Any, Dict, Union
 import torch
 import random
 import logging
@@ -14,7 +16,7 @@ from torch.backends import cudnn
 from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader 
 from omegaconf import OmegaConf
-from utils import FocalDice_MSELoss
+from utils import FocalDiceMSELoss
 
 # Import custom modules
 from data_loader import get_loader 
@@ -32,38 +34,99 @@ logger = logging.getLogger(__name__)
 
 
 class BaseTester:
-    def __init__(self, model: nn.Module, dataloaders: DataLoader, args: OmegaConf):
+    """
+    Base class for model testing with checkpoint loading capabilities.
+    
+    Args:
+        model: PyTorch model to test
+        dataloaders: DataLoader for test data
+        config: Configuration object containing test parameters
+        
+    Attributes:
+        model: The PyTorch model
+        dataloaders: Test data loaders
+        config: Configuration settings
+        start_epoch: Starting epoch for testing
+        seg_loss: Segmentation loss function
+        ce_loss: Cross-entropy loss function
+    """
+    
+    def __init__(
+        self, 
+        config: OmegaConf,
+        model: nn.Module, 
+        dataloaders: DataLoader, 
+        device: torch.device
+    ) -> None:
         self.model = model
         self.dataloaders = dataloaders
-        self.args = args
+        self.config = config
+        self.device = device
+        self.start_epoch = 0
+        
+        # Initialize loss functions
         self._setup_loss_functions()
-        if args.pretrain_path is not None:
-            self.load_checkpoint(args.pretrain_path)
-        else:
-            self.start_epoch = 0
+        
+        # Load checkpoint if specified
+        if config.get('pretrain_path'):
+            self._load_checkpoint(config.pretrain_path)
+    
 
-    def _setup_loss_functions(self):
-        self.seg_loss = FocalDice_MSELoss()
+    def _setup_loss_functions(self) -> None:
+        """Initialize loss functions used during testing."""
+        self.seg_loss = FocalDiceMSELoss()
         self.ce_loss = CrossEntropyLoss()
 
-
-    def load_checkpoint(self, ckp_path):
-        last_ckpt = None
-        if os.path.exists(ckp_path):
-            if self.args.device.multi_gpu.enabled:
-                torch.distributed.barrier()
-                last_ckpt = torch.load(ckp_path, map_location=self.args.device.device)
-            else:
-                last_ckpt = torch.load(ckp_path, map_location=self.args.device.device)
+    
+    def _load_checkpoint(self, checkpoint_path: Union[str, Path]) -> None:
+        """Load model checkpoint from specified path."""
+        checkpoint_path = Path(checkpoint_path)
         
-        if last_ckpt:
-            self.model.load_state_dict(last_ckpt['model_state_dict'])
-            self.start_epoch = last_ckpt['epoch']
-            print(f"Loaded checkpoint from {ckp_path} (epoch {self.start_epoch})")
+        if not checkpoint_path.exists():
+            logger.warning(
+                f"Checkpoint not found at {checkpoint_path}. "
+                f"Starting from epoch 0."
+            )
+            return
+        
+        try:
+            # Handle distributed training barrier
+            if self._is_distributed():
+                torch.distributed.barrier()
             
-        else:
-            self.start_epoch = 0
-            print(f"No checkpoint found at {ckp_path}, start training from scratch")
+            # Load checkpoint and model state
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
+            self.model.load_state_dict(checkpoint['model_state_dict'])
+            
+            # Update start epoch
+            self.start_epoch = checkpoint.get('epoch', 0)
+            
+            logger.info(
+                f"Successfully loaded checkpoint from {checkpoint_path} "
+                f"(epoch {self.start_epoch})"
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint from {checkpoint_path}: {e}")
+            raise RuntimeError(f"Checkpoint loading failed: {e}") from e
+        
+
+    def _is_distributed(self) -> bool:
+        """Check if distributed training is enabled."""
+        return (
+            hasattr(self.config, 'device') and 
+            hasattr(self.config.device, 'multi_gpu') and
+            self.config.device.multi_gpu.get('enabled', False)
+        )
+
+    
+    def get_checkpoint_info(self) -> Dict[str, Any]:
+        """Get information about the loaded checkpoint."""
+        return {
+            'start_epoch': self.start_epoch,
+            'model_parameters': sum(p.numel() for p in self.model.parameters()),
+            'device': next(self.model.parameters()).device,
+        }
 
     
     def get_iou_and_dice(self, pred, label):
@@ -76,15 +139,11 @@ class BaseTester:
         dice = (2 * intersection.float()) / (pred.sum(dim=(1, 2, 3)) + label.sum(dim=(1, 2, 3)) + 1e-8) 
         return iou.mean().item(), dice.mean().item()
 
-    def postprocessing_mask(self, pred_masks, ori_size):
-        masks = F.interpolate(pred_masks, ori_size, mode='bilinear')
-        return masks
 
     def interaction(self, model, image_embedding, low_masks, mask_preds, labels):
         with torch.no_grad():
-            for inter in range(self.args.dataset.inter_num-1):
+            for inter in range(self.config.dataset.inter_num-1):
                 prompts = model.supervised_prompts(None, labels, mask_preds, low_masks, 'points')
-                #outputs = model.forward_decoder(image_embedding, prompts)
                 outputs = model.decode_masks(image_embedding, prompts)
                 
                 mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
@@ -94,7 +153,7 @@ class BaseTester:
 
     def test(self):
         self.model.eval()
-        if self.args.device.multi_gpu.enabled:
+        if self.config.device.multi_gpu.enabled:
             model = self.model.module
             torch.distributed.barrier()
         else:
@@ -106,8 +165,8 @@ class BaseTester:
         category_level_metrics = {}
         avg_dice = []
         for step, batch_input in enumerate(tbar): 
-            images, labels = batch_input["image"].to(self.args.device.device), batch_input["label"].to(self.args.device.device).type(torch.long)
-            ori_labels = batch_input["ori_label"].to(self.args.device.device).type(torch.long)
+            images, labels = batch_input["image"].to(self.device), batch_input["label"].to(self.device).type(torch.long)
+            ori_labels = batch_input["ori_label"].to(self.device).type(torch.long)
             target_list = batch_input['target_list']
 
             gt_prompt = batch_input["gt_prompt"]
@@ -123,13 +182,13 @@ class BaseTester:
             for cls_idx in range(len(target_list)):
                 labels_cls = labels[cls_idx:cls_idx+1]
                 ori_labels_cls = ori_labels[cls_idx:cls_idx+1]
-                if self.args.dataset.prompt_mode == 'bboxes':
-                    test_prompts['bboxes'] = gt_prompt['bboxes'][cls_idx:cls_idx+1].to(self.args.device.device)
-                elif self.args.dataset.prompt_mode == 'points':
-                    test_prompts['point_coords'] = gt_prompt['point_coords'][cls_idx:cls_idx+1].to(self.args.device.device)
-                    test_prompts['point_labels'] = gt_prompt['point_labels'][cls_idx:cls_idx+1].to(self.args.device.device)
-                elif self.args.dataset.prompt_mode == 'text':
-                    test_prompts['text_inputs'] = text_prompt['text_inputs'][cls_idx:cls_idx+1].to(self.args.device.device)
+                if self.config.dataset.prompt_mode == 'bboxes':
+                    test_prompts['bboxes'] = gt_prompt['bboxes'][cls_idx:cls_idx+1].to(self.device)
+                elif self.config.dataset.prompt_mode == 'points':
+                    test_prompts['point_coords'] = gt_prompt['point_coords'][cls_idx:cls_idx+1].to(self.device)
+                    test_prompts['point_labels'] = gt_prompt['point_labels'][cls_idx:cls_idx+1].to(self.device)
+                elif self.config.dataset.prompt_mode == 'text':
+                    test_prompts['text_inputs'] = text_prompt['text_inputs'][cls_idx:cls_idx+1].to(self.device)
                 else:
                     print('Please setting correct prompt mode')
 
@@ -140,11 +199,12 @@ class BaseTester:
                     mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
                     loss = self.seg_loss(mask_preds, labels_cls.float(), outputs['iou_pred'])
           
-                if self.args.dataset.inter_num > 1:
+                if self.config.dataset.inter_num > 1:
                     image_embedding = image_embedding.detach()
                     loss, mask_preds = self.interaction(model, image_embedding, low_masks,  mask_preds, labels_cls)
 
-                ori_preds = self.postprocessing_mask(mask_preds, ori_labels.shape[-2:])
+                # postprocessing mask
+                ori_preds = F.interpolate(mask_preds, ori_labels.shape[-2:], mode='bilinear')
 
                 category_iou, category_dice = self.get_iou_and_dice(ori_preds, ori_labels_cls)
 
@@ -159,8 +219,8 @@ class BaseTester:
        
             logger.info(f"{image_root}, loss: {loss:.4f}, iou: {iou:.4f}, dice: {dice:.4f}")
 
-        if self.args.device.multi_gpu.enabled:
-            local_dice = torch.tensor([float(np.mean(avg_dice))]).to(self.args.device.device)
+        if self.config.device.multi_gpu.enabled:
+            local_dice = torch.tensor([float(np.mean(avg_dice))]).to(self.device)
             torch.distributed.all_reduce(local_dice, op=torch.distributed.ReduceOp.SUM) 
             Avg_dice = local_dice.item() / torch.distributed.get_world_size()
         else:
@@ -168,7 +228,7 @@ class BaseTester:
 
         logger.info(f"{'*'*10} Image Avg Dice: {Avg_dice:.4f} {'*'*10}")
 
-        logger.info(f'args : {self.args}')
+        logger.info(f'args : {self.config}')
         logger.info('=====================================================================')
 
 
@@ -223,19 +283,6 @@ def cleanup_distributed() -> None:
         torch.distributed.destroy_process_group()
 
 
-def print_config(config) -> None:
-    """Print configuration parameters in a formatted way.
-    
-    Args:
-        config: Configuration object to print
-    """
-    print('=' * 100)
-    print('Configuration:')
-    for key, value in vars(config).items():
-        print(f'  {key}: {value}')
-    print('=' * 100)
-
-
 def run_single_gpu(config) -> None:
     """Run training/testing on single GPU or CPU."""
     # Initialize seeds for reproducibility
@@ -247,7 +294,7 @@ def run_single_gpu(config) -> None:
     model, _ = load_model(config, device)
     
     # Initialize tester and run
-    tester = BaseTester(model, dataloaders, config)
+    tester = BaseTester(config, model, dataloaders, device)
     tester.test()
 
 
@@ -293,7 +340,6 @@ def main_worker(rank: int, config) -> None:
 def main():
     """Main entry point for the application."""
     config = parse_args()
-    print_config(config)
     
     # Set multiprocessing sharing strategy
     mp.set_sharing_strategy('file_system')
