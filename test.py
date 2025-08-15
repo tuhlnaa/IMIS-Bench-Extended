@@ -1,77 +1,25 @@
-# set up environment
-import numpy as np
-import random 
-import matplotlib.pyplot as plt
 import os
-import csv
-import ast
-
-join = os.path.join
-from tqdm import tqdm
-from torch.backends import cudnn
 import torch
-import torch.nn as nn
-import torch.distributed as dist
-import torch.nn.functional as F
-from segment_anything import sam_model_registry
-import argparse
-from torch.cuda import amp
-import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel as DDP
-import datetime
-import logging
-from rich.logging import RichHandler
-from model import IMISNet
-from utils import FocalDice_MSELoss
-from torch.nn import CrossEntropyLoss
-import warnings
-import re
-from data_loader import get_loader 
-
-import os
 import random
 import logging
-import datetime
-from typing import Optional, Dict, Any
 
 import numpy as np
-import torch
-import torch.distributed as dist
+import torch.nn as nn
+import torch.nn.functional as F
 import torch.multiprocessing as mp
-from torch.backends import cudnn
 
+from rich.logging import RichHandler
+from tqdm import tqdm
+from torch.backends import cudnn
+from torch.nn import CrossEntropyLoss
+from torch.utils.data import DataLoader 
+from omegaconf import OmegaConf
+from utils import FocalDice_MSELoss
 
 # Import custom modules
+from data_loader import get_loader 
 from configs.config import parse_args
 from src.utils.inference import determine_device, load_model
-
-warnings.filterwarnings("ignore", category=UserWarning)
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--work_dir', type=str, default='work_dir')
-parser.add_argument('--task_name', type=str, default='ft-IMISNet')
-#load data
-parser.add_argument("--data_dir", type = str, default="D:/Kai/DATA_Set_2/medical-segmentation/BTCV")
-parser.add_argument('--image_size', type=int, default=1024)
-parser.add_argument('--test_mode', type=bool, default=True)
-parser.add_argument('--batch_size', type=int, default=1)
-#load model
-parser.add_argument('--model_type', type=str, default='vit_b')
-parser.add_argument('--sam_checkpoint', type=str, default='ckpt/IMISNet-B.pth')
-parser.add_argument('--pretrain_path', type=str, default=None)
-parser.add_argument('--device', type=str, default='cuda')
-parser.add_argument('--mask_num', type=int, default=None)
-parser.add_argument('--prompt_mode', type=str, default='points')
-parser.add_argument('--inter_num', type=int, default=1)
-# train
-parser.add_argument('--gpu_ids', type=int, nargs='+', default=[0]) 
-parser.add_argument('--multi_gpu', action='store_true', default=False)
-parser.add_argument('--port', type=int, default=12361)
-parser.add_argument('--dist', dest='dist', type=bool, default=False, help='distributed training or not')
-parser.add_argument('-num_workers', type=int, default=1)
-
-args = parser.parse_args()
-os.environ["CUDA_VISIBLE_DEVICES"] = ','.join([str(i) for i in args.gpu_ids])
 
 # Configure logging
 logging.basicConfig(
@@ -80,27 +28,21 @@ logging.basicConfig(
     format="%(message)s", 
     handlers=[RichHandler()]
 )
-
 logger = logging.getLogger(__name__)
-LOG_OUT_DIR = join(args.work_dir, args.task_name)
-
-device = args.device
-MODEL_SAVE_PATH = join(args.work_dir, args.task_name)
-os.makedirs(MODEL_SAVE_PATH, exist_ok=True)
 
 
 class BaseTester:
-    def __init__(self, model, dataloaders, args):
+    def __init__(self, model: nn.Module, dataloaders: DataLoader, args: OmegaConf):
         self.model = model
         self.dataloaders = dataloaders
         self.args = args
-        self.set_loss_fn()
+        self._setup_loss_functions()
         if args.pretrain_path is not None:
             self.load_checkpoint(args.pretrain_path)
         else:
             self.start_epoch = 0
 
-    def set_loss_fn(self):
+    def _setup_loss_functions(self):
         self.seg_loss = FocalDice_MSELoss()
         self.ce_loss = CrossEntropyLoss()
 
@@ -109,22 +51,13 @@ class BaseTester:
         last_ckpt = None
         if os.path.exists(ckp_path):
             if self.args.device.multi_gpu.enabled:
-                dist.barrier()
+                torch.distributed.barrier()
                 last_ckpt = torch.load(ckp_path, map_location=self.args.device.device)
             else:
                 last_ckpt = torch.load(ckp_path, map_location=self.args.device.device)
         
         if last_ckpt:
-            if self.args.device.multi_gpu.enabled:
-                try:
-                    self.model.module.load_state_dict(last_ckpt['model_state_dict'])
-                except:
-                    self.model.load_state_dict(last_ckpt['model_state_dict'], False)
-            else:
-                try:
-                    self.model.load_state_dict(last_ckpt['model_state_dict'])
-                except:
-                    self.model.load_state_dict(last_ckpt['model_state_dict'], False)
+            self.model.load_state_dict(last_ckpt['model_state_dict'])
             self.start_epoch = last_ckpt['epoch']
             print(f"Loaded checkpoint from {ckp_path} (epoch {self.start_epoch})")
             
@@ -163,7 +96,7 @@ class BaseTester:
         self.model.eval()
         if self.args.device.multi_gpu.enabled:
             model = self.model.module
-            dist.barrier()
+            torch.distributed.barrier()
         else:
             model = self.model
    
@@ -228,8 +161,8 @@ class BaseTester:
 
         if self.args.device.multi_gpu.enabled:
             local_dice = torch.tensor([float(np.mean(avg_dice))]).to(self.args.device.device)
-            dist.all_reduce(local_dice, op=dist.ReduceOp.SUM) 
-            Avg_dice = local_dice.item() / dist.get_world_size()
+            torch.distributed.all_reduce(local_dice, op=torch.distributed.ReduceOp.SUM) 
+            Avg_dice = local_dice.item() / torch.distributed.get_world_size()
         else:
             Avg_dice = np.mean(avg_dice)
 
@@ -237,9 +170,6 @@ class BaseTester:
 
         logger.info(f'args : {self.args}')
         logger.info('=====================================================================')
-
-
-
 
 
 def init_seeds(seed: int = 0, cuda_deterministic: bool = True) -> None:
@@ -265,62 +195,6 @@ def init_seeds(seed: int = 0, cuda_deterministic: bool = True) -> None:
             cudnn.benchmark = True
 
 
-def setup_device(args) -> None:
-    """Configure device settings based on args.
-    
-    Args:
-        args: Configuration object containing device settings
-        
-    Raises:
-        RuntimeError: If device configuration fails
-    """
-    try:
-        if not args.device.multi_gpu.enabled:
-            if hasattr(args, 'device') and args.device == 'mps':
-                if torch.backends.mps.is_available():
-                    args.device = torch.device('mps')
-                else:
-                    print("MPS not available, falling back to CPU")
-                    args.device = torch.device('cpu')
-            elif hasattr(args, 'gpu_ids') and args.gpu_ids and torch.cuda.is_available():
-                args.device = torch.device(f"cuda:{args.gpu_ids[0]}")
-            else:
-                args.device = torch.device('cpu')
-        else:
-            if not (hasattr(args, 'gpu_ids') and args.gpu_ids):
-                raise ValueError("GPU IDs must be specified for multi-GPU training")
-            
-            args.nodes = 1
-            args.ngpus_per_node = len(args.gpu_ids)
-            args.world_size = args.nodes * args.ngpus_per_node
-            
-    except (RuntimeError, ValueError) as e:
-        print(f"Device configuration error: {e}")
-        raise
-
-
-def setup_logging(rank: int, log_dir: str, prompt_mode: str) -> None:
-    """Setup logging configuration for distributed training.
-    
-    Args:
-        rank: Process rank (0 for main process)
-        log_dir: Directory to save log files
-        prompt_mode: Mode identifier for log filename
-    """
-    os.makedirs(log_dir, exist_ok=True)
-    
-    cur_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    log_filename = os.path.join(log_dir, f'{prompt_mode}_output_{cur_time}_rank_{rank}.log')
-    
-    logging.basicConfig(
-        format='[%(asctime)s] - %(message)s',
-        datefmt='%Y/%m/%d %H:%M:%S',
-        level=logging.INFO if rank in [-1, 0] else logging.WARN,
-        filemode='w',
-        filename=log_filename
-    )
-
-
 def setup_distributed(rank: int, world_size: int, port: int = 12355) -> None:
     """Initialize distributed training setup.
     
@@ -335,7 +209,7 @@ def setup_distributed(rank: int, world_size: int, port: int = 12355) -> None:
     # Use NCCL for CUDA, gloo for CPU/MPS or Windows
     backend = 'nccl' if torch.cuda.is_available() and os.name != 'nt' else 'gloo'
     
-    dist.init_process_group(
+    torch.distributed.init_process_group(
         backend=backend, 
         init_method='env://', 
         rank=rank, 
@@ -345,8 +219,8 @@ def setup_distributed(rank: int, world_size: int, port: int = 12355) -> None:
 
 def cleanup_distributed() -> None:
     """Clean up distributed training resources."""
-    if dist.is_initialized():
-        dist.destroy_process_group()
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 
 def print_config(config) -> None:
@@ -363,11 +237,7 @@ def print_config(config) -> None:
 
 
 def run_single_gpu(config) -> None:
-    """Run training/testing on single GPU or CPU.
-    
-    Args:
-        config: Configuration object
-    """
+    """Run training/testing on single GPU or CPU."""
     # Initialize seeds for reproducibility
     init_seeds(seed=42, cuda_deterministic=True)
     
@@ -405,14 +275,9 @@ def main_worker(rank: int, config) -> None:
         # Initialize seeds with rank offset for different initialization per process
         init_seeds(2023 + rank, cuda_deterministic=True)
         
-        # Setup logging
-        log_dir = getattr(config, 'log_dir', './logs')
-        prompt_mode = getattr(config, 'prompt_mode', 'default')
-        setup_logging(rank, log_dir, prompt_mode)
-        
         # Load data and model
         dataloaders = get_loader(config)
-        model, _ = load_model(config, device)
+        model, _ = load_model(config, config.device)
         
         # Initialize tester and run
         tester = BaseTester(model, dataloaders, config)
@@ -433,19 +298,14 @@ def main():
     # Set multiprocessing sharing strategy
     mp.set_sharing_strategy('file_system')
     
-    # Setup device configuration
-    #setup_device(config)
-    
     # Run training/testing
-    if getattr(config, 'multi_gpu', False):
-        # Multi-GPU distributed training
+    if config.device.multi_gpu.enabled:
         mp.spawn(
             main_worker, 
             nprocs=config.world_size, 
             args=(config,)
         )
     else:
-        # Single GPU/CPU training
         run_single_gpu(config)
         
 
@@ -455,3 +315,37 @@ if __name__ == '__main__':
         mp.set_start_method('spawn', force=True)
     
     main()
+
+# parser = argparse.ArgumentParser()
+# parser.add_argument('--work_dir', type=str, default='work_dir')
+# parser.add_argument('--task_name', type=str, default='ft-IMISNet')
+# #load data
+# parser.add_argument("--data_dir", type = str, default="D:/Kai/DATA_Set_2/medical-segmentation/BTCV")
+# parser.add_argument('--image_size', type=int, default=1024)
+# parser.add_argument('--test_mode', type=bool, default=True)
+# parser.add_argument('--batch_size', type=int, default=1)
+# #load model
+# parser.add_argument('--model_type', type=str, default='vit_b')
+# parser.add_argument('--sam_checkpoint', type=str, default='ckpt/IMISNet-B.pth')
+# parser.add_argument('--pretrain_path', type=str, default=None)
+# parser.add_argument('--device', type=str, default='cuda')
+# parser.add_argument('--mask_num', type=int, default=None)
+# parser.add_argument('--prompt_mode', type=str, default='points')
+# parser.add_argument('--inter_num', type=int, default=1)
+# # train
+# parser.add_argument('--gpu_ids', type=int, nargs='+', default=[0]) 
+# parser.add_argument('--multi_gpu', action='store_true', default=False)
+# parser.add_argument('--port', type=int, default=12361)
+# parser.add_argument('--dist', dest='dist', type=bool, default=False, help='distributed training or not')
+# parser.add_argument('-num_workers', type=int, default=1)
+
+# args = parser.parse_args()
+# os.environ["CUDA_VISIBLE_DEVICES"] = ','.join([str(i) for i in args.gpu_ids])
+
+
+
+# LOG_OUT_DIR = join(args.work_dir, args.task_name)
+
+# device = args.device
+# MODEL_SAVE_PATH = join(args.work_dir, args.task_name)
+# os.makedirs(MODEL_SAVE_PATH, exist_ok=True)
