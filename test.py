@@ -1,6 +1,4 @@
 import os
-from pathlib import Path
-from typing import Any, Dict, Union
 import torch
 import random
 import logging
@@ -11,10 +9,11 @@ import torch.nn.functional as F
 import torch.multiprocessing as mp
 
 from rich.logging import RichHandler
+from pathlib import Path
 from tqdm import tqdm
 from torch.backends import cudnn
-from torch.nn import CrossEntropyLoss
 from torch.utils.data import DataLoader 
+from typing import Any, Dict, List, Tuple, Union
 from omegaconf import OmegaConf
 from utils import FocalDiceMSELoss
 
@@ -22,6 +21,7 @@ from utils import FocalDiceMSELoss
 from data_loader import get_loader 
 from configs.config import parse_args
 from src.utils.inference import determine_device, load_model
+
 
 # Configure logging
 logging.basicConfig(
@@ -37,15 +37,20 @@ class BaseTester:
     """
     Base class for model testing with checkpoint loading capabilities.
     
+    This class provides a unified interface for testing PyTorch models with support
+    for distributed training, checkpoint loading, and interactive refinement.
+    
     Args:
+        config: Configuration object containing test parameters
         model: PyTorch model to test
         dataloaders: DataLoader for test data
-        config: Configuration object containing test parameters
+        device: Device to run testing on
         
     Attributes:
         model: The PyTorch model
         dataloaders: Test data loaders
         config: Configuration settings
+        device: Computation device
         start_epoch: Starting epoch for testing
         seg_loss: Segmentation loss function
         ce_loss: Cross-entropy loss function
@@ -58,9 +63,9 @@ class BaseTester:
         dataloaders: DataLoader, 
         device: torch.device
     ) -> None:
+        self.config = config
         self.model = model
         self.dataloaders = dataloaders
-        self.config = config
         self.device = device
         self.start_epoch = 0
         
@@ -75,17 +80,16 @@ class BaseTester:
     def _setup_loss_functions(self) -> None:
         """Initialize loss functions used during testing."""
         self.seg_loss = FocalDiceMSELoss()
-        self.ce_loss = CrossEntropyLoss()
-
+        self.ce_loss = nn.CrossEntropyLoss()
     
+
     def _load_checkpoint(self, checkpoint_path: Union[str, Path]) -> None:
         """Load model checkpoint from specified path."""
         checkpoint_path = Path(checkpoint_path)
         
         if not checkpoint_path.exists():
             logger.warning(
-                f"Checkpoint not found at {checkpoint_path}. "
-                f"Starting from epoch 0."
+                f"Checkpoint not found at {checkpoint_path}. Starting from epoch 0."
             )
             return
         
@@ -95,7 +99,11 @@ class BaseTester:
                 torch.distributed.barrier()
             
             # Load checkpoint and model state
-            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
+            checkpoint = torch.load(
+                checkpoint_path, 
+                map_location=self.device, 
+                weights_only=True
+            )
             self.model.load_state_dict(checkpoint['model_state_dict'])
             
             # Update start epoch
@@ -109,7 +117,7 @@ class BaseTester:
         except Exception as e:
             logger.error(f"Failed to load checkpoint from {checkpoint_path}: {e}")
             raise RuntimeError(f"Checkpoint loading failed: {e}") from e
-        
+    
 
     def _is_distributed(self) -> bool:
         """Check if distributed training is enabled."""
@@ -118,8 +126,8 @@ class BaseTester:
             hasattr(self.config.device, 'multi_gpu') and
             self.config.device.multi_gpu.get('enabled', False)
         )
-
     
+
     def get_checkpoint_info(self) -> Dict[str, Any]:
         """Get information about the loaded checkpoint."""
         return {
@@ -127,109 +135,283 @@ class BaseTester:
             'model_parameters': sum(p.numel() for p in self.model.parameters()),
             'device': next(self.model.parameters()).device,
         }
-
     
-    def get_iou_and_dice(self, pred, label):
-        assert pred.shape == label.shape
-        pred = (torch.sigmoid(pred) > 0.5)
-        label = (label > 0)
-        intersection = torch.logical_and(pred, label).sum(dim=(1, 2, 3)) 
-        union = torch.logical_or(pred, label).sum(dim=(1, 2, 3))  
-        iou = intersection.float() / (union.float() + 1e-8) 
-        dice = (2 * intersection.float()) / (pred.sum(dim=(1, 2, 3)) + label.sum(dim=(1, 2, 3)) + 1e-8) 
+
+    def _compute_metrics(self, pred: torch.Tensor, label: torch.Tensor) -> Tuple[float, float]:
+        """
+        Compute IoU and Dice metrics for predictions and labels.
+        
+        Args:
+            pred: Predicted masks [B, C, H, W]
+            label: Ground truth labels [B, C, H, W]
+            
+        Returns:
+            Tuple of (IoU, Dice) scores
+        """
+        assert pred.shape == label.shape, f"Shape mismatch: {pred.shape} vs {label.shape}"
+        
+        # Apply sigmoid and threshold for predictions
+        pred_binary = (torch.sigmoid(pred) > 0.5)
+        label_binary = (label > 0)
+        
+        # Calculate intersection and union
+        intersection = torch.logical_and(pred_binary, label_binary).sum(dim=(1, 2, 3))
+        union = torch.logical_or(pred_binary, label_binary).sum(dim=(1, 2, 3))
+        
+        # Calculate metrics with epsilon for numerical stability
+        eps = 1e-8
+        iou = intersection.float() / (union.float() + eps)
+        
+        pred_sum = pred_binary.sum(dim=(1, 2, 3))
+        label_sum = label_binary.sum(dim=(1, 2, 3))
+        dice = (2 * intersection.float()) / (pred_sum + label_sum + eps)
+        
         return iou.mean().item(), dice.mean().item()
+    
 
-
-    def interaction(self, model, image_embedding, low_masks, mask_preds, labels):
+    def _interactive_refinement(
+        self, 
+        model: nn.Module, 
+        image_embedding: torch.Tensor, 
+        low_masks: torch.Tensor, 
+        mask_preds: torch.Tensor, 
+        labels: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Perform interactive mask refinement.
+        
+        Args:
+            model: The model to use for refinement
+            image_embedding: Encoded image features
+            low_masks: Low resolution masks
+            mask_preds: Current mask predictions
+            labels: Ground truth labels
+            
+        Returns:
+            Tuple of (final_loss, refined_mask_predictions)
+        """
         with torch.no_grad():
-            for inter in range(self.config.dataset.inter_num-1):
-                prompts = model.supervised_prompts(None, labels, mask_preds, low_masks, 'points')
+            for _ in range(self.config.dataset.inter_num - 1):
+                prompts = model.supervised_prompts(
+                    None, labels, mask_preds, low_masks, 'points'
+                )
                 outputs = model.decode_masks(image_embedding, prompts)
-                
                 mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
+            
             loss = self.seg_loss(mask_preds, labels.float(), outputs['iou_pred'])
+        
         return loss, mask_preds
+    
 
+    def _prepare_prompts(
+        self, 
+        prompt_mode: str, 
+        gt_prompt: Dict[str, torch.Tensor], 
+        text_prompt: Dict[str, torch.Tensor], 
+        cls_idx: int
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Prepare prompts based on the specified mode.
+        
+        Args:
+            prompt_mode: Type of prompt ('bboxes', 'points', 'text')
+            gt_prompt: Ground truth prompt data
+            text_prompt: Text prompt data
+            cls_idx: Class index
+            
+        Returns:
+            Prepared prompts dictionary
+            
+        Raises:
+            ValueError: If prompt mode is not supported
+        """
+        prompts = {}
+        
+        if prompt_mode == 'bboxes':
+            prompts['bboxes'] = gt_prompt['bboxes'][cls_idx:cls_idx+1].to(self.device)
+        elif prompt_mode == 'points':
+            prompts['point_coords'] = gt_prompt['point_coords'][cls_idx:cls_idx+1].to(self.device)
+            prompts['point_labels'] = gt_prompt['point_labels'][cls_idx:cls_idx+1].to(self.device)
+        elif prompt_mode == 'text':
+            prompts['text_inputs'] = text_prompt['text_inputs'][cls_idx:cls_idx+1].to(self.device)
+        else:
+            raise ValueError(f"Unsupported prompt mode: {prompt_mode}")
+        
+        return prompts
+    
 
-    def test(self):
+    def _process_single_class(
+        self,
+        model: nn.Module,
+        image_embedding: torch.Tensor,
+        text_prompt: Dict[str, torch.Tensor],
+        gt_prompt: Dict[str, torch.Tensor],
+        labels: torch.Tensor,
+        ori_labels: torch.Tensor,
+        cls_idx: int
+    ) -> Dict[str, float]:
+        """
+        Process a single class prediction and compute metrics.
+        
+        Args:
+            model: The model to use for prediction
+            image_embedding: Encoded image features
+            text_prompt: Text prompt data
+            gt_prompt: Ground truth prompt data
+            labels: Ground truth labels
+            ori_labels: Original resolution labels
+            cls_idx: Class index
+            
+        Returns:
+            Dictionary containing loss, IoU, and Dice metrics
+        """
+        # Extract class-specific data
+        labels_cls = labels[cls_idx:cls_idx+1]
+        ori_labels_cls = ori_labels[cls_idx:cls_idx+1]
+        
+        # Prepare prompts
+        test_prompts = self._prepare_prompts(
+            self.config.dataset.prompt_mode,
+            gt_prompt,
+            text_prompt,
+            cls_idx
+        )
+        
+        # Forward pass
+        with torch.no_grad():
+            outputs = model.decode_masks(image_embedding, test_prompts)
+            mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
+            loss = self.seg_loss(mask_preds, labels_cls.float(), outputs['iou_pred'])
+        
+        # Interactive refinement if enabled
+        if self.config.dataset.inter_num > 1:
+            image_embedding_detached = image_embedding.detach()
+            loss, mask_preds = self._interactive_refinement(
+                model, image_embedding_detached, low_masks, mask_preds, labels_cls
+            )
+        
+        # Resize predictions to original resolution
+        ori_preds = F.interpolate(
+            mask_preds, 
+            ori_labels.shape[-2:], 
+            mode='bilinear',
+            align_corners=False
+        )
+        
+        # Compute metrics
+        category_iou, category_dice = self._compute_metrics(ori_preds, ori_labels_cls)
+        
+        return {
+            'loss': loss.item(),
+            'iou': category_iou,
+            'dice': category_dice
+        }
+    
+
+    def _aggregate_distributed_metrics(self, local_metrics: List[float]) -> float:
+        """
+        Aggregate metrics across distributed processes.
+        
+        Args:
+            local_metrics: List of local metric values
+            
+        Returns:
+            Aggregated metric value
+        """
+        if self._is_distributed():
+            local_tensor = torch.tensor([np.mean(local_metrics)]).to(self.device)
+            torch.distributed.all_reduce(local_tensor, op=torch.distributed.ReduceOp.SUM)
+            return local_tensor.item() / torch.distributed.get_world_size()
+        else:
+            return np.mean(local_metrics)
+    
+
+    def test(self) -> Dict[str, float]:
+        """
+        Run the full testing loop.
+        
+        Returns:
+            Dictionary containing final test metrics
+        """
         self.model.eval()
-        if self.config.device.multi_gpu.enabled:
+        
+        # Get the actual model (handle distributed wrapper)
+        if self._is_distributed():
             model = self.model.module
             torch.distributed.barrier()
         else:
             model = self.model
-   
-        tbar = tqdm(self.dataloaders)
-        l = len(self.dataloaders)
+        
+        # Initialize metrics tracking
+        all_dice_scores = []
+        all_iou =[]
+        all_loss = []
 
-        category_level_metrics = {}
-        avg_dice = []
-        for step, batch_input in enumerate(tbar): 
-            images, labels = batch_input["image"].to(self.device), batch_input["label"].to(self.device).type(torch.long)
+        # Create progress bar
+        progress_bar = tqdm(self.dataloaders, desc="Testing")
+        
+        for step, batch_input in enumerate(progress_bar):
+            # Move data to device
+            images = batch_input["image"].to(self.device)
+            labels = batch_input["label"].to(self.device).type(torch.long)
             ori_labels = batch_input["ori_label"].to(self.device).type(torch.long)
             target_list = batch_input['target_list']
-
             gt_prompt = batch_input["gt_prompt"]
             image_root = batch_input["image_root"][0]
-      
-            #text_prompt = model.process_text_prompt(target_list)
+            
+            # Encode image and text
             text_prompt = model.text_tokenizer(target_list)
-            #image_embedding = model.image_forward(images)
             image_embedding = model.encode_image(images)
-
-            test_prompts = {}
-            image_level_metrics = {'loss':[],'iou':[],'dice':[],'category_pred':[]}
+            
+            # Process each class
+            image_metrics = {'loss': [], 'iou': [], 'dice': []}
+            
             for cls_idx in range(len(target_list)):
-                labels_cls = labels[cls_idx:cls_idx+1]
-                ori_labels_cls = ori_labels[cls_idx:cls_idx+1]
-                if self.config.dataset.prompt_mode == 'bboxes':
-                    test_prompts['bboxes'] = gt_prompt['bboxes'][cls_idx:cls_idx+1].to(self.device)
-                elif self.config.dataset.prompt_mode == 'points':
-                    test_prompts['point_coords'] = gt_prompt['point_coords'][cls_idx:cls_idx+1].to(self.device)
-                    test_prompts['point_labels'] = gt_prompt['point_labels'][cls_idx:cls_idx+1].to(self.device)
-                elif self.config.dataset.prompt_mode == 'text':
-                    test_prompts['text_inputs'] = text_prompt['text_inputs'][cls_idx:cls_idx+1].to(self.device)
-                else:
-                    print('Please setting correct prompt mode')
+                class_metrics = self._process_single_class(
+                    model, image_embedding, text_prompt, gt_prompt,
+                    labels, ori_labels, cls_idx
+                )
+                
+                # Accumulate metrics
+                for key in image_metrics:
+                    image_metrics[key].append(class_metrics[key])
+            
+            # Compute average metrics for this image
+            avg_loss = np.mean(image_metrics['loss'])
+            avg_iou = np.mean(image_metrics['iou'])
+            avg_dice = np.mean(image_metrics['dice'])
+            
+            all_dice_scores.append(avg_dice)
+            all_iou.append(avg_iou)
+            all_loss.append(avg_loss)
 
-                with torch.no_grad():
-                    #outputs = model.forward_decoder(image_embedding, test_prompts)
-                    outputs = model.decode_masks(image_embedding, test_prompts)
-                    
-                    mask_preds, low_masks = outputs['masks'], outputs['low_res_masks']
-                    loss = self.seg_loss(mask_preds, labels_cls.float(), outputs['iou_pred'])
-          
-                if self.config.dataset.inter_num > 1:
-                    image_embedding = image_embedding.detach()
-                    loss, mask_preds = self.interaction(model, image_embedding, low_masks,  mask_preds, labels_cls)
+            # Update progress bar and log
+            progress_bar.set_postfix({
+                'loss': f"{avg_loss:.4f}",
+                'iou': f"{avg_iou:.4f}",
+                'dice': f"{avg_dice:.4f}"
+            })
+            
+            logger.info(
+                f"{image_root} - Loss: {avg_loss:.4f}, IoU: {avg_iou:.4f}, "
+                f"Dice: {avg_dice:.4f}"
+            )
+        
+        # Aggregate final metrics
+        final_dice = self._aggregate_distributed_metrics(all_dice_scores)
+        final_iou = self._aggregate_distributed_metrics(all_iou)
+        final_loss = self._aggregate_distributed_metrics(all_loss)
 
-                # postprocessing mask
-                ori_preds = F.interpolate(mask_preds, ori_labels.shape[-2:], mode='bilinear')
-
-                category_iou, category_dice = self.get_iou_and_dice(ori_preds, ori_labels_cls)
-
-                image_level_metrics['loss'].append(loss.item())
-                image_level_metrics['iou'].append(category_iou)
-                image_level_metrics['dice'].append(category_dice)
-    
-            loss = np.mean(image_level_metrics['loss'])
-            iou = np.mean(image_level_metrics['iou'])
-            dice = np.mean(image_level_metrics['dice'])
-            avg_dice.append(dice)
-       
-            logger.info(f"{image_root}, loss: {loss:.4f}, iou: {iou:.4f}, dice: {dice:.4f}")
-
-        if self.config.device.multi_gpu.enabled:
-            local_dice = torch.tensor([float(np.mean(avg_dice))]).to(self.device)
-            torch.distributed.all_reduce(local_dice, op=torch.distributed.ReduceOp.SUM) 
-            Avg_dice = local_dice.item() / torch.distributed.get_world_size()
-        else:
-            Avg_dice = np.mean(avg_dice)
-
-        logger.info(f"{'*'*10} Image Avg Dice: {Avg_dice:.4f} {'*'*10}")
-
-        logger.info(f'args : {self.config}')
-        logger.info('=====================================================================')
+        logger.info(f"{'='*50}")
+        logger.info(f"Final Average Dice Score: {final_dice:.4f}")
+        logger.info(f"Final Average IoU: {final_iou:.4f}")
+        logger.info(f"Final Average Loss: {final_loss:.4f}")
+        logger.info(f"{'='*50}")
+        
+        return {
+            'average_dice': final_dice,
+            'total_samples': len(all_dice_scores)
+        }
 
 
 def init_seeds(seed: int = 0, cuda_deterministic: bool = True) -> None:
