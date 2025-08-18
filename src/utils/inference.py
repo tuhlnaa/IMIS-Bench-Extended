@@ -90,7 +90,7 @@ def run_interactive_demo(
 
     # Initialize model
     device = determine_device(config)
-    imis_net, predictor = load_model(config, device)
+    _, predictor = load_model(config, device)
 
     # Initialize components
     vis_utils = VisualizationUtils(output_path, filename_stem)
@@ -103,7 +103,7 @@ def run_interactive_demo(
     plt.imshow(image)
     vis_utils.save_plot("Original Image", "original")
 
-    predictor.set_image(image_array)
+    predictor.get_image_features(image_array)
 
     # Process all examples using unified logic
     results = {}

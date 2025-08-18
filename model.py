@@ -336,12 +336,7 @@ class IMISNet(nn.Module):
             semantic_pred = outputs['semantic_pred']
         
         # Upsample masks to original size
-        masks = F.interpolate(
-            low_res_masks, 
-            size=self.image_size, 
-            mode='bilinear', 
-            align_corners=False
-        )
+        masks = F.interpolate(low_res_masks, size=self.image_size, mode='bilinear', align_corners=False)
         
         return {
             'masks': masks.float(),

@@ -117,20 +117,21 @@ class PromptProcessor:
                 raise AssertionError("point_labels must be supplied if point_coords is supplied.")
             
             coords = self.transform_coords(point_coords, original_size, image_size)
-            tensors['point_coords'] = torch.as_tensor(coords, dtype=torch.float32, device=self.device)[None, :, :]
-            tensors['point_labels'] = torch.as_tensor(point_labels, dtype=torch.int32, device=self.device)[None, :]
+
+            tensors['point_coords'] = torch.as_tensor(coords, dtype=torch.float32, device=self.device).unsqueeze(0)
+            tensors['point_labels'] = torch.as_tensor(point_labels, dtype=torch.int32, device=self.device).unsqueeze(0)
         else:
             tensors['point_coords'] = None
             tensors['point_labels'] = None
         
         if box is not None:
             box = self.transform_boxes(box, original_size, image_size)
-            tensors['boxes'] = torch.as_tensor(box, dtype=torch.float32, device=self.device)[None, :]
+            tensors['boxes'] = torch.as_tensor(box, dtype=torch.float32, device=self.device).unsqueeze(0)
         else:
             tensors['boxes'] = None
         
         if mask_input is not None:
-            tensors['mask_input'] = torch.as_tensor(mask_input, dtype=torch.float32, device=self.device)[None, :, :, :]
+            tensors['mask_input'] = torch.as_tensor(mask_input, dtype=torch.float32, device=self.device).unsqueeze(0)
         else:
             tensors['mask_input'] = None
         
@@ -161,34 +162,7 @@ class PromptProcessor:
             prompt['point_labels'] = point_labels
         
         return prompt
-
-
-class MaskPostProcessor:
-    """Handles mask resizing, thresholding, and format conversion"""
     
-    DEFAULT_SIGMOID_THRESHOLD = 0.5
-    
-
-    def postprocess_masks(
-        self, masks: torch.Tensor, target_size: Tuple[int, int]
-    ) -> torch.Tensor:
-        """Resize masks to target size."""
-        return F.interpolate(masks, target_size, mode="bilinear", align_corners=False)
-    
-
-    def apply_sigmoid_threshold(self, masks: torch.Tensor, threshold: float = None) -> torch.Tensor:
-        """Apply sigmoid and threshold to get binary masks."""
-        if threshold is None:
-            threshold = self.DEFAULT_SIGMOID_THRESHOLD
-        
-        masks = torch.sigmoid(masks)
-        return (masks > threshold).float()
-    
-
-    def convert_masks_to_numpy(self, masks: torch.Tensor) -> np.ndarray:
-        """Convert torch tensor masks to numpy arrays."""
-        return masks.detach().cpu().numpy()
-
 
 class ClassificationHandler:
     """Manages semantic predictions and class mapping"""
@@ -246,7 +220,6 @@ class IMISPredictor:
             model_image_format=getattr(imis_model, 'image_format', 'RGB')
         )
         self.prompt_processor = PromptProcessor(self.device)
-        self.mask_postprocessor = MaskPostProcessor()
         self.classification_handler = ClassificationHandler(imis_model)
         
         # Initialize state
@@ -264,7 +237,7 @@ class IMISPredictor:
         self.input_w = None
     
 
-    def set_image(self, image: np.ndarray, image_format: str = "RGB") -> None:
+    def get_image_features(self, image: np.ndarray, image_format: str = "RGB") -> None:
         """Set and preprocess the input image for prediction.
         
         Args:
@@ -324,8 +297,8 @@ class IMISPredictor:
             return_logits=return_logits,
         )
 
-        masks = self.mask_postprocessor.convert_masks_to_numpy(masks)
-        low_res_masks = self.mask_postprocessor.convert_masks_to_numpy(low_res_masks[0])
+        masks = masks.detach().cpu().numpy()
+        low_res_masks = low_res_masks[0].detach().cpu().numpy()
 
         return masks, low_res_masks, class_list
     
@@ -333,7 +306,7 @@ class IMISPredictor:
     def _validate_image_set(self) -> None:
         """Validate that an image has been set."""
         if not self.is_image_set:
-            raise RuntimeError("An image must be set with .set_image(...) before mask prediction.")
+            raise RuntimeError("An image must be set with .get_image_features(...) before mask prediction.")
     
 
     @torch.no_grad()
@@ -362,7 +335,8 @@ class IMISPredictor:
         
         # Post-process masks
         if not return_logits:
-            masks = self.mask_postprocessor.apply_sigmoid_threshold(masks)
+            masks = torch.sigmoid(masks)
+            masks = (masks > 0.5).float()
 
         return masks, low_res_masks, class_list
     
@@ -379,7 +353,7 @@ class IMISPredictor:
             outputs = self.decode_masks(self.features, prompt)
             
             # Process masks
-            masks = self.mask_postprocessor.postprocess_masks(outputs['masks'], self.original_size)
+            masks = F.interpolate(outputs['masks'], self.original_size, mode="bilinear", align_corners=False)
             masks_list.append(masks)
             
             # Process class predictions
@@ -396,7 +370,7 @@ class IMISPredictor:
         """Process a single prompt."""
         outputs = self.decode_masks(self.features, prompt)
         
-        masks = self.mask_postprocessor.postprocess_masks(outputs['masks'], self.original_size)
+        masks = F.interpolate(outputs['masks'], self.original_size, mode="bilinear", align_corners=False)
         class_pred = self.classification_handler.get_class_prediction(outputs.get('semantic_pred'))
         
         return masks, outputs['low_res_masks'], [class_pred]
