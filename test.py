@@ -21,6 +21,7 @@ from utils import FocalDiceMSELoss
 from data_loader import get_loader 
 from configs.config import parse_args
 from src.utils.inference import determine_device, load_model
+from src.utils.metrics import SegmentationMetrics
 
 
 # Configure logging
@@ -54,6 +55,7 @@ class BaseTester:
         start_epoch: Starting epoch for testing
         seg_loss: Segmentation loss function
         ce_loss: Cross-entropy loss function
+        metrics: SegmentationMetrics instance for tracking metrics
     """
     
     def __init__(
@@ -71,6 +73,9 @@ class BaseTester:
         
         # Initialize loss functions
         self._setup_loss_functions()
+        
+        # Initialize metrics tracker
+        self.metrics = SegmentationMetrics(split='test')
         
         # Load checkpoint if specified
         if config.get('pretrain_path'):
@@ -135,38 +140,6 @@ class BaseTester:
             'model_parameters': sum(p.numel() for p in self.model.parameters()),
             'device': next(self.model.parameters()).device,
         }
-    
-
-    def _compute_metrics(self, pred: torch.Tensor, label: torch.Tensor) -> Tuple[float, float]:
-        """
-        Compute IoU and Dice metrics for predictions and labels.
-        
-        Args:
-            pred: Predicted masks [B, C, H, W]
-            label: Ground truth labels [B, C, H, W]
-            
-        Returns:
-            Tuple of (IoU, Dice) scores
-        """
-        assert pred.shape == label.shape, f"Shape mismatch: {pred.shape} vs {label.shape}"
-        
-        # Apply sigmoid and threshold for predictions
-        pred_binary = (torch.sigmoid(pred) > 0.5)
-        label_binary = (label > 0)
-        
-        # Calculate intersection and union
-        intersection = torch.logical_and(pred_binary, label_binary).sum(dim=(1, 2, 3))
-        union = torch.logical_or(pred_binary, label_binary).sum(dim=(1, 2, 3))
-        
-        # Calculate metrics with epsilon for numerical stability
-        eps = 1e-8
-        iou = intersection.float() / (union.float() + eps)
-        
-        pred_sum = pred_binary.sum(dim=(1, 2, 3))
-        label_sum = label_binary.sum(dim=(1, 2, 3))
-        dice = (2 * intersection.float()) / (pred_sum + label_sum + eps)
-        
-        return iou.mean().item(), dice.mean().item()
     
 
     def _interactive_refinement(
@@ -249,9 +222,9 @@ class BaseTester:
         labels: torch.Tensor,
         ori_labels: torch.Tensor,
         cls_idx: int
-    ) -> Dict[str, float]:
+    ) -> Dict[str, torch.Tensor]:
         """
-        Process a single class prediction and compute metrics.
+        Process a single class prediction and return predictions and targets.
         
         Args:
             model: The model to use for prediction
@@ -263,7 +236,7 @@ class BaseTester:
             cls_idx: Class index
             
         Returns:
-            Dictionary containing loss, IoU, and Dice metrics
+            Dictionary containing predictions, targets, and loss
         """
         # Extract class-specific data
         labels_cls = labels[cls_idx:cls_idx+1]
@@ -298,41 +271,35 @@ class BaseTester:
             align_corners=False
         )
         
-        # Compute metrics
-        category_iou, category_dice = self._compute_metrics(ori_preds, ori_labels_cls)
-        
         return {
-            'loss': loss.item(),
-            'iou': category_iou,
-            'dice': category_dice
+            'predictions': ori_preds,
+            'targets': ori_labels_cls,
+            'loss': loss
         }
     
 
-    def _aggregate_distributed_metrics(self, local_metrics: List[float]) -> float:
-        """
-        Aggregate metrics across distributed processes.
-        
-        Args:
-            local_metrics: List of local metric values
-            
-        Returns:
-            Aggregated metric value
-        """
+    def _aggregate_distributed_metrics(self, metrics_dict: Dict[str, float]) -> Dict[str, float]:
+        """Aggregate metrics across distributed processes."""
         if self._is_distributed():
-            local_tensor = torch.tensor([np.mean(local_metrics)]).to(self.device)
-            torch.distributed.all_reduce(local_tensor, op=torch.distributed.ReduceOp.SUM)
-            return local_tensor.item() / torch.distributed.get_world_size()
+            aggregated_metrics = {}
+            for key, value in metrics_dict.items():
+                if key.endswith('_total_samples'):
+                    # Sum total samples across processes
+                    local_tensor = torch.tensor([value]).to(self.device)
+                    torch.distributed.all_reduce(local_tensor, op=torch.distributed.ReduceOp.SUM)
+                    aggregated_metrics[key] = int(local_tensor.item())
+                else:
+                    # Average other metrics across processes
+                    local_tensor = torch.tensor([value]).to(self.device)
+                    torch.distributed.all_reduce(local_tensor, op=torch.distributed.ReduceOp.SUM)
+                    aggregated_metrics[key] = local_tensor.item() / torch.distributed.get_world_size()
+            return aggregated_metrics
         else:
-            return np.mean(local_metrics)
+            return metrics_dict
     
 
     def test(self) -> Dict[str, float]:
-        """
-        Run the full testing loop.
-        
-        Returns:
-            Dictionary containing final test metrics
-        """
+        """Run the full testing loop."""
         self.model.eval()
         
         # Get the actual model (handle distributed wrapper)
@@ -342,10 +309,8 @@ class BaseTester:
         else:
             model = self.model
         
-        # Initialize metrics tracking
-        all_dice_scores = []
-        all_iou =[]
-        all_loss = []
+        # Reset metrics tracker
+        self.metrics.reset()
 
         # Create progress bar
         progress_bar = tqdm(self.dataloaders, desc="Testing")
@@ -357,60 +322,54 @@ class BaseTester:
             ori_labels = batch_input["ori_label"].to(self.device).type(torch.long)
             target_list = batch_input['target_list']
             gt_prompt = batch_input["gt_prompt"]
-            image_root = batch_input["image_root"][0]
             
             # Encode image and text
             text_prompt = model.text_tokenizer(target_list)
             image_embedding = model.encode_image(images)
             
-            # Process each class
-            image_metrics = {'loss': [], 'iou': [], 'dice': []}
+            # Process each class and collect predictions/targets/losses
+            preds_list = []
+            targets_list = []
+            loss_list = []
             
             for cls_idx in range(len(target_list)):
-                class_metrics = self._process_single_class(
+                class_results = self._process_single_class(
                     model, image_embedding, text_prompt, gt_prompt,
                     labels, ori_labels, cls_idx
                 )
                 
-                # Accumulate metrics
-                for key in image_metrics:
-                    image_metrics[key].append(class_metrics[key])
+                preds_list.append(class_results['predictions'])
+                targets_list.append(class_results['targets'])
+                loss_list.append(class_results['loss'])
             
-            # Compute average metrics for this image
-            avg_loss = np.mean(image_metrics['loss'])
-            avg_iou = np.mean(image_metrics['iou'])
-            avg_dice = np.mean(image_metrics['dice'])
+            # Update metrics with multi-class results
+            self.metrics.update_multi_class(preds_list, targets_list, loss_list)
             
-            all_dice_scores.append(avg_dice)
-            all_iou.append(avg_iou)
-            all_loss.append(avg_loss)
-
-            # Update progress bar and log
+            # Update progress bar with minimal info
             progress_bar.set_postfix({
-                'loss': f"{avg_loss:.4f}",
-                'iou': f"{avg_iou:.4f}",
-                'dice': f"{avg_dice:.4f}"
+                'samples': f"{step + 1}/{len(self.dataloaders)}"
             })
-            
-            logger.info(
-                f"{image_root} - Loss: {avg_loss:.4f}, IoU: {avg_iou:.4f}, "
-                f"Dice: {avg_dice:.4f}"
-            )
         
-        # Aggregate final metrics
-        final_dice = self._aggregate_distributed_metrics(all_dice_scores)
-        final_iou = self._aggregate_distributed_metrics(all_iou)
-        final_loss = self._aggregate_distributed_metrics(all_loss)
-
+        # Compute final metrics
+        final_metrics = self.metrics.compute()
+        
+        # Aggregate across distributed processes if needed
+        if self._is_distributed():
+            final_metrics = self._aggregate_distributed_metrics(final_metrics)
+        
+        # Print final summary
         logger.info(f"{'='*50}")
-        logger.info(f"Final Average Dice Score: {final_dice:.4f}")
-        logger.info(f"Final Average IoU: {final_iou:.4f}")
-        logger.info(f"Final Average Loss: {final_loss:.4f}")
+        logger.info(f"Final Test Results:")
+        logger.info(f"Average Dice Score: {final_metrics['test_mean_dice']:.4f}")
+        logger.info(f"Average IoU Score: {final_metrics['test_mean_iou']:.4f}")
+        logger.info(f"Average Loss: {final_metrics['test_loss']:.4f}")
+        logger.info(f"Total Samples: {final_metrics['test_total_samples']}")
         logger.info(f"{'='*50}")
         
         return {
-            'average_dice': final_dice,
-            'total_samples': len(all_dice_scores)
+            'average_dice': final_metrics['test_mean_dice'],
+            'average_iou': final_metrics['test_mean_iou'],
+            'total_samples': final_metrics['test_total_samples']
         }
 
 
@@ -543,37 +502,3 @@ if __name__ == '__main__':
         mp.set_start_method('spawn', force=True)
     
     main()
-
-# parser = argparse.ArgumentParser()
-# parser.add_argument('--work_dir', type=str, default='work_dir')
-# parser.add_argument('--task_name', type=str, default='ft-IMISNet')
-# #load data
-# parser.add_argument("--data_dir", type = str, default="D:/Kai/DATA_Set_2/medical-segmentation/BTCV")
-# parser.add_argument('--image_size', type=int, default=1024)
-# parser.add_argument('--test_mode', type=bool, default=True)
-# parser.add_argument('--batch_size', type=int, default=1)
-# #load model
-# parser.add_argument('--model_type', type=str, default='vit_b')
-# parser.add_argument('--sam_checkpoint', type=str, default='ckpt/IMISNet-B.pth')
-# parser.add_argument('--pretrain_path', type=str, default=None)
-# parser.add_argument('--device', type=str, default='cuda')
-# parser.add_argument('--mask_num', type=int, default=None)
-# parser.add_argument('--prompt_mode', type=str, default='points')
-# parser.add_argument('--inter_num', type=int, default=1)
-# # train
-# parser.add_argument('--gpu_ids', type=int, nargs='+', default=[0]) 
-# parser.add_argument('--multi_gpu', action='store_true', default=False)
-# parser.add_argument('--port', type=int, default=12361)
-# parser.add_argument('--dist', dest='dist', type=bool, default=False, help='distributed training or not')
-# parser.add_argument('-num_workers', type=int, default=1)
-
-# args = parser.parse_args()
-# os.environ["CUDA_VISIBLE_DEVICES"] = ','.join([str(i) for i in args.gpu_ids])
-
-
-
-# LOG_OUT_DIR = join(args.work_dir, args.task_name)
-
-# device = args.device
-# MODEL_SAVE_PATH = join(args.work_dir, args.task_name)
-# os.makedirs(MODEL_SAVE_PATH, exist_ok=True)
