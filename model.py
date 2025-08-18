@@ -464,13 +464,3 @@ class IMISNet(nn.Module):
         if template:
             self.text_processor.template = template
         return self.text_processor.tokenize_text(text, self.text_model, self.text_out_dim)
-
-
-def main():
-    """Test the network initialization."""
-    print('IMISNet - Interactive Medical Image Segmentation Network')
-    print('Network module loaded successfully')
-
-
-if __name__ == '__main__':
-    main()

@@ -217,9 +217,9 @@ def run_segmentation(
             single_masks, single_logits, single_category_pred = model.predict(
                 point_coords=point_coords,
                 point_labels=point_labels,
-                mask_input=mask_input,
                 bounding_box=bounding_box,
                 text_prompt=[single_text],  # Wrap single text in list
+                mask_input=mask_input,
                 multimask_output=multimask_output,
             )
             

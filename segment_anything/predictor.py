@@ -81,7 +81,7 @@ class PromptProcessor:
         old_h, old_w = original_size
         new_h, new_w = new_size
         
-        coords = coords.astype(np.float32).copy()
+        coords = np.array(coords, dtype=np.float32)
         coords[..., 0] *= new_w / old_w
         coords[..., 1] *= new_h / old_h
         
@@ -95,8 +95,10 @@ class PromptProcessor:
         new_size: Tuple[int, int]
     ) -> np.ndarray:
         """Transform bounding boxes from original to new size."""
-        boxes_reshaped = boxes.reshape(-1, 2, 2)
+
+        boxes_reshaped = boxes.reshape(-1, 2, 2)  # (4,) -> (1, 2, 2)
         boxes_transformed = self.transform_coords(boxes_reshaped, original_size, new_size)
+
         return boxes_transformed.reshape(-1, 4)
     
 

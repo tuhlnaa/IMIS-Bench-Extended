@@ -304,7 +304,7 @@ class BaseTester:
         
         # Get the actual model (handle distributed wrapper)
         if self._is_distributed():
-            model = self.model.module
+            model = self.model
             torch.distributed.barrier()
         else:
             model = self.model
@@ -502,3 +502,10 @@ if __name__ == '__main__':
         mp.set_start_method('spawn', force=True)
     
     main()
+
+"""
+Average Dice Score: 0.7900
+Average IoU Score: 0.6928
+Average Loss: 0.3605
+Total Samples: 232
+"""
