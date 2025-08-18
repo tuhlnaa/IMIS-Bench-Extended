@@ -1,18 +1,17 @@
-# Interactive Medical Image Segmentation: A Benchmark Dataset and Baseline
-# Refactored version with improvements
-
+import re
 import random
 import pickle
-import re
-from typing import Dict, Optional, Tuple, List, Any, Union
-from dataclasses import dataclass
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from transformers import AutoTokenizer
 
+from dataclasses import dataclass
+from transformers import AutoTokenizer
+from typing import Dict, Optional, Tuple, List, Any
+from omegaconf import OmegaConf
+
+# Import custom modules
 from dataloaders.data_utils import get_points_from_mask, get_bboxes_from_mask
 
 
@@ -237,6 +236,7 @@ class IMISNet(nn.Module):
     
     def __init__(
         self,
+        config: OmegaConf,
         sam: nn.Module,
         test_mode: bool = False,
         multimask_output: bool = True,
@@ -258,8 +258,7 @@ class IMISNet(nn.Module):
         self.test_mode = test_mode
         self.multimask_output = multimask_output
         self.select_mask_num = select_mask_num
-        self.image_format = sam.image_format
-        self.image_size = sam.prompt_encoder.input_image_size
+        self.image_size = (config.model.image_size, config.model.image_size)
         
         # Initialize processors
         self.prompt_processor = PromptProcessor(self.device, test_mode)

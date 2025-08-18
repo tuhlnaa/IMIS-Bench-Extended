@@ -1,6 +1,7 @@
 # Adapted from: https://github.com/facebookresearch/segment-anything/blob/main/segment_anything/predictor.py
 
 import numpy as np
+from omegaconf import OmegaConf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -150,7 +151,7 @@ class PromptProcessor:
     ) -> Dict[str, Any]:
         """Build prompt dictionary for model input."""
         prompt = {}
-        
+
         if text is not None and text_tokenizer is not None:
             prompt['text_inputs'] = text_tokenizer(text).to(self.device)
         
@@ -203,12 +204,13 @@ class ClassificationHandler:
 class IMISPredictor:
     """Orchestrates the above components for end-to-end prediction"""
     
-    def __init__(self, imis_model: nn.Module, encode_image, decode_masks):
+    def __init__(self, config: OmegaConf, imis_model: nn.Module, encode_image, decode_masks):
         """Initialize the predictor with a SAM model.
         
         Args:
             sam_model: Pre-trained SAM model instance
         """
+        self.config = config
         self.model = imis_model
         self.encode_image = encode_image
         self.decode_masks = decode_masks
@@ -231,10 +233,7 @@ class IMISPredictor:
         self.is_image_set = False
         self.features = None
         self.original_size = None
-        self.image_size = self.model.image_size
-        self.input_h, self.input_w = self.model.image_size
-        self.input_h = None
-        self.input_w = None
+        self.image_size = (self.config.model.image_size, self.config.model.image_size)
     
 
     def get_image_features(self, image: np.ndarray, image_format: str = "RGB") -> None:

@@ -24,6 +24,7 @@ def load_model(config: OmegaConf, device: torch.device):
         sam = get_sam_model(config.model.sam_model_type, config).to(device)
         
         imis_net = IMISNet(
+            config, 
             sam, 
             test_mode=config.model.test_mode, 
             category_weights=config.category_weights_path
@@ -32,7 +33,7 @@ def load_model(config: OmegaConf, device: torch.device):
         if config.device.multi_gpu.enabled:
             imis = DDP(imis, device_ids=[config.device.multi_gpu.rank], output_device=config.device.multi_gpu.rank)
 
-        predictor = IMISPredictor(imis_net, imis_net.encode_image, imis_net.decode_masks)
+        predictor = IMISPredictor(config, imis_net, imis_net.encode_image, imis_net.decode_masks)
         print(f"[blue]Model loaded successfully on {device}[/blue]")
         
     except Exception as e:

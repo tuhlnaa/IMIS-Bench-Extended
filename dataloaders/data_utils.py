@@ -133,56 +133,6 @@ def get_bboxes_from_mask(
     return torch.tensor(bounding_boxes, dtype=torch.float).unsqueeze(1)
 
 
-# def cleanse_pseudo_label(pseudo_seg: torch.Tensor) -> torch.Tensor:
-#     """Clean pseudo labels by removing small regions and applying morphological operations.
-    
-#     Args:
-#         pseudo_seg: Pseudo segmentation tensor
-        
-#     Returns:
-#         Cleaned pseudo segmentation tensor
-#     """
-#     total_voxels = pseudo_seg.numel()
-#     threshold = int(total_voxels * 0.0005)
-    
-#     # Remove small regions globally
-#     unique_values = torch.unique(pseudo_seg)
-#     for value in unique_values:
-#         if (pseudo_seg == value).sum() < threshold:
-#             pseudo_seg[pseudo_seg == value] = -1
-    
-#     # Apply morphological operations per label
-#     for label in torch.unique(pseudo_seg):
-#         if label == -1:
-#             continue
-        
-#         # Extract binary mask for current label
-#         binary_mask = (pseudo_seg == label)
-        
-#         # Apply morphological operations
-#         opened = ndimage.binary_opening(binary_mask.squeeze().numpy())
-#         closed = ndimage.binary_closing(opened)
-#         processed_mask = torch.tensor(closed)
-        
-#         # Remove small components
-#         labeled_mask, num_labels = ndimage.label(processed_mask)
-#         if num_labels > 0:
-#             label_sizes = ndimage.sum(
-#                 processed_mask, 
-#                 labeled_mask, 
-#                 range(num_labels + 1)
-#             )
-#             small_labels = np.where(label_sizes < threshold)[0]
-#             for small_label in small_labels:
-#                 processed_mask[labeled_mask == small_label] = False
-        
-#         # Update pseudo segmentation
-#         pseudo_seg[binary_mask] = -1
-#         pseudo_seg[processed_mask.unsqueeze(0)] = label
-
-#     return pseudo_seg
-
-
 def cleanse_pseudo_label(pseudo_seg: torch.Tensor) -> torch.Tensor:
     """
     Clean pseudo labels by removing small regions and applying morphological operations.
