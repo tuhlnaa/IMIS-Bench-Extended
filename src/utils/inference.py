@@ -13,16 +13,18 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 # Import custom modules
 from model import IMISNet
+from script.Extract_ViT_weights import load_vit_with_extracted_weights
 from segment_anything.build_sam import get_sam_model
-from segment_anything.predictor import IMISPredictor
+from segment_anything.predictor import IMISPredictor, ImagePreprocessor
 from src.utils.visualization import VisualizationUtils
 
 
 def load_model(config: OmegaConf, device: torch.device):
     """Load the SAM model and IMISNet."""
     try:
-        sam = get_sam_model(config.model.sam_model_type, config).to(device)
-        
+        sam, image_encoder = get_sam_model(config.model.sam_model_type, config)
+        sam, image_encoder = sam.to(device), image_encoder.to(device)
+
         imis_net = IMISNet(
             config, 
             sam, 
@@ -39,7 +41,7 @@ def load_model(config: OmegaConf, device: torch.device):
     except Exception as e:
         raise RuntimeError(f"Failed to load model: {e}")
     
-    return imis_net, predictor
+    return imis_net, predictor, image_encoder
 
 
 def determine_device(config: OmegaConf = None, verbose: bool = True) -> torch.device:
@@ -91,7 +93,7 @@ def run_interactive_demo(
 
     # Initialize model
     device = determine_device(config)
-    _, predictor = load_model(config, device)
+    _, predictor, image_encoder = load_model(config, device)
 
     # Initialize components
     vis_utils = VisualizationUtils(output_path, filename_stem)
@@ -104,7 +106,39 @@ def run_interactive_demo(
     plt.imshow(image)
     vis_utils.save_plot("Original Image", "original")
 
-    predictor.get_image_features(image_array)
+    # predictor.get_image_features(image_array)
+    # 🛠️🛠️
+    predictor.original_size = image_array.shape[:2]
+    image_preprocessor = ImagePreprocessor(image_size=(config.model.image_size, config.model.image_size))
+    input_tensor = image_preprocessor.preprocess_image(image_array, "RGB")
+    # predictor.features = predictor.encode_image(input_tensor.to(device))
+    # predictor.is_image_set = True
+    
+
+    # VIT_CONFIGS = {
+    #     "vit_b": {
+    #         "encoder_embed_dim": 768,
+    #         "encoder_depth": 12,
+    #         "encoder_num_heads": 12,
+    #         "encoder_global_attn_indexes": [2, 5, 8, 11],
+    #         "pretrain_model": "samvit_base_patch16"
+    #     }
+    # }
+    # vit_config = VIT_CONFIGS["vit_b"]
+    # vit_output_path = "output/checkpoint/vit_b_weights_only.pth"
+
+    # # Load ViT with extracted weights
+    # vit_model = load_vit_with_extracted_weights(
+    #     vit_weights_path=vit_output_path,
+    #     config=vit_config,
+    #     prompt_embed_dim=768,
+    #     device=device
+    # )
+    predictor.features = image_encoder(input_tensor.to(device))
+    predictor.is_image_set = True
+
+
+
 
     # Process all examples using unified logic
     results = {}

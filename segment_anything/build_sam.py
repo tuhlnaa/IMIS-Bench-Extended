@@ -2,7 +2,7 @@
 import torch
 
 from torch import nn
-from typing import Optional
+from typing import Any, Dict, Optional
 from transformers import CLIPTextConfig, CLIPTextModel
 from omegaconf import OmegaConf
 
@@ -49,6 +49,7 @@ def build_sam(
     encoder_global_attn_indexes: list,
     image_size: int,
     checkpoint: Optional[str],
+    checkpoint_vit: Optional[str],
     pretrain_model: str,
     prompt_embed_dim: int = DEFAULT_PROMPT_EMBED_DIM,
     vit_patch_size: int = DEFAULT_VIT_PATCH_SIZE
@@ -72,15 +73,17 @@ def build_sam(
     """
     image_embedding_size = image_size // vit_patch_size
 
+    image_encoder = ViT(
+        encoder_embed_dim=encoder_embed_dim,
+        pretrain_model=pretrain_model,
+        out_chans=prompt_embed_dim,
+        depth=encoder_depth,
+        freeze_encoder=True,
+        pretrained=False,
+    )
+
     sam = Sam(
-        image_encoder=ViT(
-            encoder_embed_dim=encoder_embed_dim,
-            pretrain_model=pretrain_model,
-            out_chans=prompt_embed_dim,
-            depth=encoder_depth,
-            freeze_encoder=True,
-            pretrained=False,
-        ),
+        image_encoder=image_encoder,
         prompt_encoder=PromptEncoder(
             embed_dim=prompt_embed_dim,
             image_embedding_size=(image_embedding_size, image_embedding_size),
@@ -105,10 +108,13 @@ def build_sam(
     )
     
     if checkpoint is not None:
-        state_dict = torch.load(checkpoint, map_location="cuda", weights_only=True)
+        state_dict = torch.load(checkpoint, weights_only=True)
         sam.load_state_dict(state_dict)
+
+        vit_weights = torch.load(checkpoint_vit, weights_only=True)
+        image_encoder.load_state_dict(vit_weights)
         print(f"Successfully loaded checkpoint: {checkpoint}")
-    return sam
+    return sam, image_encoder
 
 
 def create_sam_builder(variant: str):
@@ -123,6 +129,7 @@ def create_sam_builder(variant: str):
             encoder_global_attn_indexes=config["encoder_global_attn_indexes"],
             image_size=args.model.image_size,
             checkpoint=args.checkpoint_path,
+            checkpoint_vit=args.checkpoint_vit_path,
             pretrain_model=config["pretrain_model"]
         )
     
@@ -162,3 +169,43 @@ def get_sam_model(variant: str = "default", config: OmegaConf = None) -> Sam:
         raise KeyError(f"Unknown variant '{variant}'. Available: {available}")
     
     return sam_model_registry[variant](config)
+
+
+def load_vit_with_extracted_weights(
+    vit_weights_path: str,
+    config: Dict[str, Any],
+    prompt_embed_dim: int = 768,
+    device: str = "cpu"
+) -> ViT:
+    """
+    Load a ViT model and initialize it with extracted weights.
+    
+    Args:
+        vit_weights_path: Path to the extracted ViT weights
+        config: ViT configuration dictionary
+        prompt_embed_dim: Output channels for the ViT
+        device: Device to load the model on
+    
+    Returns:
+        ViT model with loaded weights
+    """
+    print(f"Loading ViT weights from: {vit_weights_path}")
+    
+    # Create ViT model
+    vit_model = ViT(
+        encoder_embed_dim=config["encoder_embed_dim"],
+        pretrain_model=config["pretrain_model"],
+        out_chans=prompt_embed_dim,
+        depth=config["encoder_depth"],
+        freeze_encoder=True,  # Set to False if you want to fine-tune
+        pretrained=False,
+    ).to(device)
+    
+    # Load the extracted weights
+    vit_weights = torch.load(vit_weights_path, map_location=device, weights_only=True)
+    
+    # Load weights into the model
+    vit_model.load_state_dict(vit_weights)
+    print("ViT weights loaded successfully!")
+    
+    return vit_model

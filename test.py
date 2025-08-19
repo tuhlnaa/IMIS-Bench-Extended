@@ -432,7 +432,7 @@ def run_single_gpu(config) -> None:
     # Load data and model
     device = determine_device(config)
     dataloaders = get_loader(config)
-    model, _ = load_model(config, device)
+    model, _, image_encoder = load_model(config, device)
     
     # Initialize tester and run
     tester = BaseTester(config, model, dataloaders, device)
@@ -465,7 +465,7 @@ def main_worker(rank: int, config) -> None:
         
         # Load data and model
         dataloaders = get_loader(config)
-        model, _ = load_model(config, config.device)
+        model, _, image_encoder = load_model(config, config.device)
         
         # Initialize tester and run
         tester = BaseTester(model, dataloaders, config)
