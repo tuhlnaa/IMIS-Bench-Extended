@@ -219,10 +219,7 @@ class IMISPredictor:
         self.device = imis_model.device
         
         # Initialize component classes
-        self.image_preprocessor = ImagePreprocessor(
-            image_size=imis_model.image_size,
-            model_image_format=getattr(imis_model, 'image_format', 'RGB')
-        )
+        self.image_preprocessor = ImagePreprocessor(image_size=imis_model.image_size)
         self.prompt_processor = PromptProcessor(self.device)
         self.classification_handler = ClassificationHandler(imis_model)
         

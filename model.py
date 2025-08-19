@@ -315,7 +315,7 @@ class IMISNet(nn.Module):
             masks=prompt.get("mask_inputs"),
             text=prompt.get("text_inputs")
         )
-        
+
         # Decode masks
         outputs = self.mask_decoder(
             image_embeddings=image_embedding,

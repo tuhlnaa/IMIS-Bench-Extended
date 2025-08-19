@@ -309,3 +309,4 @@ class MLP(nn.Module):
             x = torch.sigmoid(x)
         
         return x
+
