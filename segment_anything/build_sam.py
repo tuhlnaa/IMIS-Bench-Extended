@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 
 # Import custom modules
 from .modeling import ViT, MaskDecoder, PromptEncoder, Sam, TwoWayTransformer
+from src.models.text_encoder import StandaloneTextEncoder
 
 
 # Model configuration constants
@@ -43,13 +44,11 @@ DEFAULT_PIXEL_STD = [58.395, 57.12, 57.375]
 
 
 def build_sam(
+    config: OmegaConf,
     encoder_embed_dim: int,
     encoder_depth: int,
     encoder_num_heads: int,
     encoder_global_attn_indexes: list,
-    image_size: int,
-    checkpoint: Optional[str],
-    checkpoint_vit: Optional[str],
     pretrain_model: str,
     prompt_embed_dim: int = DEFAULT_PROMPT_EMBED_DIM,
     vit_patch_size: int = DEFAULT_VIT_PATCH_SIZE
@@ -71,7 +70,7 @@ def build_sam(
     Returns:
         Configured SAM model
     """
-    image_embedding_size = image_size // vit_patch_size
+    image_embedding_size = config.model.image_size // vit_patch_size
 
     image_encoder = ViT(
         encoder_embed_dim=encoder_embed_dim,
@@ -81,13 +80,14 @@ def build_sam(
         freeze_encoder=True,
         pretrained=False,
     )
+    text_encoder = StandaloneTextEncoder(text_model=CLIPTextModel(CLIPTextConfig()))
 
     sam = Sam(
         image_encoder=image_encoder,
         prompt_encoder=PromptEncoder(
             embed_dim=prompt_embed_dim,
             image_embedding_size=(image_embedding_size, image_embedding_size),
-            input_image_size=(image_size, image_size),
+            input_image_size=(config.model.image_size, config.model.image_size),
             mask_in_chans=16,
         ),
         mask_decoder=MaskDecoder(
@@ -107,13 +107,17 @@ def build_sam(
         pixel_std=DEFAULT_PIXEL_STD,
     )
     
-    if checkpoint is not None:
-        state_dict = torch.load(checkpoint, weights_only=True)
+    if config.checkpoint_path is not None:
+        state_dict = torch.load(config.checkpoint_path, weights_only=True)
         sam.load_state_dict(state_dict)
 
-        vit_weights = torch.load(checkpoint_vit, weights_only=True)
+        vit_weights = torch.load(config.checkpoint_vit_path, weights_only=True)
         image_encoder.load_state_dict(vit_weights)
-        print(f"Successfully loaded checkpoint: {checkpoint}")
+
+        clip_weights = torch.load(config.checkpoint_clip_path, weights_only=True)
+        text_encoder.load_state_dict(clip_weights)
+
+        print(f"Successfully loaded checkpoint: {config.checkpoint_path}")
     return sam, image_encoder
 
 
@@ -123,13 +127,11 @@ def create_sam_builder(variant: str):
     
     def builder(args) -> Sam:
         return build_sam(
+            config=args,
             encoder_embed_dim=config["encoder_embed_dim"],
             encoder_depth=config["encoder_depth"],
             encoder_num_heads=config["encoder_num_heads"],
             encoder_global_attn_indexes=config["encoder_global_attn_indexes"],
-            image_size=args.model.image_size,
-            checkpoint=args.checkpoint_path,
-            checkpoint_vit=args.checkpoint_vit_path,
             pretrain_model=config["pretrain_model"]
         )
     

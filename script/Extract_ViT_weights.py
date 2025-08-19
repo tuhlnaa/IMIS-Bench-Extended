@@ -10,6 +10,7 @@ sys.path.append(str(PROJECT_ROOT))
 from segment_anything.build_sam import build_sam
 from segment_anything.modeling.image_encoder import ViT
 
+
 def extract_vit_weights_from_sam_checkpoint(
     checkpoint_path: str,
     output_path: str,
@@ -79,9 +80,8 @@ def load_vit_with_extracted_weights(
     
     # Load the extracted weights
     vit_weights = torch.load(vit_weights_path, map_location=device, weights_only=True)
-    
-    # Load weights into the model
     vit_model.load_state_dict(vit_weights)
+    
     print("ViT weights loaded successfully!")
     
     return vit_model
