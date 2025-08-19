@@ -106,39 +106,14 @@ def run_interactive_demo(
     plt.imshow(image)
     vis_utils.save_plot("Original Image", "original")
 
-    # predictor.get_image_features(image_array)
-    # 🛠️🛠️
-    predictor.original_size = image_array.shape[:2]
+    # Preprocess image
     image_preprocessor = ImagePreprocessor(image_size=(config.model.image_size, config.model.image_size))
     input_tensor = image_preprocessor.preprocess_image(image_array, "RGB")
-    # predictor.features = predictor.encode_image(input_tensor.to(device))
-    # predictor.is_image_set = True
     
-
-    # VIT_CONFIGS = {
-    #     "vit_b": {
-    #         "encoder_embed_dim": 768,
-    #         "encoder_depth": 12,
-    #         "encoder_num_heads": 12,
-    #         "encoder_global_attn_indexes": [2, 5, 8, 11],
-    #         "pretrain_model": "samvit_base_patch16"
-    #     }
-    # }
-    # vit_config = VIT_CONFIGS["vit_b"]
-    # vit_output_path = "output/checkpoint/vit_b_weights_only.pth"
-
-    # # Load ViT with extracted weights
-    # vit_model = load_vit_with_extracted_weights(
-    #     vit_weights_path=vit_output_path,
-    #     config=vit_config,
-    #     prompt_embed_dim=768,
-    #     device=device
-    # )
+    # Encode image
     predictor.features = image_encoder(input_tensor.to(device))
+    predictor.original_size = image_array.shape[:2]
     predictor.is_image_set = True
-
-
-
 
     # Process all examples using unified logic
     results = {}

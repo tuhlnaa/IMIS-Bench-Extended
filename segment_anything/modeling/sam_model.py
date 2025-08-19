@@ -36,10 +36,7 @@ class Sam(nn.Module):
         self.prompt_encoder = prompt_encoder
         self.mask_decoder = mask_decoder
         self.text_model = text_model
-        
-        # Only create text output projection if text model is provided
-        if self.text_model is not None:
-            self.text_out_dim = nn.Linear(512, 768)
+        self.text_out_dim = nn.Linear(512, 768)
 
         self.register_buffer(
             "pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), persistent=False

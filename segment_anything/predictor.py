@@ -235,23 +235,6 @@ class IMISPredictor:
         self.image_size = (self.config.model.image_size, self.config.model.image_size)
     
 
-    def get_image_features(self, image: np.ndarray, image_format: str = "RGB") -> None:
-        """Set and preprocess the input image for prediction.
-        
-        Args:
-            image: Input image as numpy array (H, W, C)
-            image_format: Image color format ('RGB' or 'BGR')
-        """
-        self.original_size = image.shape[:2]
-
-        # Preprocess image
-        input_tensor = self.image_preprocessor.preprocess_image(image, image_format)
-        
-        # Encode image
-        self.features = self.encode_image(input_tensor.to(self.device))
-        self.is_image_set = True
-    
-
     def predict(
         self,
         point_coords: Optional[np.ndarray] = None,
@@ -280,7 +263,6 @@ class IMISPredictor:
             RuntimeError: If no image has been set
             AssertionError: If point_coords provided without point_labels
         """
-        self._validate_image_set()
         
         # Convert prompts to tensors
         prompt_tensors = self.prompt_processor.prepare_prompt_tensors(
@@ -299,13 +281,7 @@ class IMISPredictor:
         low_res_masks = low_res_masks[0].detach().cpu().numpy()
 
         return masks, low_res_masks, class_list
-    
 
-    def _validate_image_set(self) -> None:
-        """Validate that an image has been set."""
-        if not self.is_image_set:
-            raise RuntimeError("An image must be set with .get_image_features(...) before mask prediction.")
-    
 
     @torch.no_grad()
     def predict_torch(
