@@ -264,14 +264,14 @@ class IMISNet(nn.Module):
         self.prompt_processor = PromptProcessor(self.device, test_mode)
         self.text_processor = TextProcessor(self.device, category_weights_path=self.category_weights)
         
-        # Freeze text model parameters
-        self._freeze_text_model()
+    #     # Freeze text model parameters
+    #     self._freeze_text_model()
     
 
-    def _freeze_text_model(self) -> None:
-        """Freeze text model parameters."""
-        for param in self.text_model.parameters():
-            param.requires_grad = False
+    # def _freeze_text_model(self) -> None:
+    #     """Freeze text model parameters."""
+    #     for param in self.text_model.parameters():
+    #         param.requires_grad = False
     
     
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:

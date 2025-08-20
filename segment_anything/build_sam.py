@@ -80,7 +80,7 @@ def build_sam(
         freeze_encoder=True,
         pretrained=False,
     )
-    text_encoder = StandaloneTextEncoder(text_model=CLIPTextModel(CLIPTextConfig()))
+    #text_encoder = StandaloneTextEncoder(text_model=CLIPTextModel(CLIPTextConfig()))
 
     sam = Sam(
         image_encoder=image_encoder,
@@ -115,7 +115,7 @@ def build_sam(
         image_encoder.load_state_dict(vit_weights)
 
         clip_weights = torch.load(config.checkpoint_clip_path, weights_only=True)
-        text_encoder.load_state_dict(clip_weights)
+        #text_encoder.load_state_dict(clip_weights)
 
         print(f"Successfully loaded checkpoint: {config.checkpoint_path}")
     return sam, image_encoder

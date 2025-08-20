@@ -35,7 +35,15 @@ class StandaloneTextEncoder(nn.Module):
         # Use provided model or create default
         self.text_model = text_model if text_model is not None else CLIPTextModel(CLIPTextConfig())
         self.projection = nn.Linear(input_dim, output_dim)
-        
+
+        # Freeze text model parameters
+        self._freeze_text_model()
+    
+    def _freeze_text_model(self) -> None:
+        """Freeze text model parameters."""
+        for param in self.text_model.parameters():
+            param.requires_grad = False
+
     def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """Forward pass through text model and projection."""
         text_outputs = self.text_model(input_ids=input_ids, attention_mask=attention_mask)

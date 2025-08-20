@@ -10,55 +10,75 @@ from configs.config import parse_args
 from src.utils.inference import determine_device, load_model
 from src.models.text_encoder import StandaloneTextEncoder, TextProcessor
 
-
 class TextWeightExtractor:
     """Utility class for extracting and managing text model weights."""
     
     @staticmethod
-    def extract_combined_weights(sam_model) -> dict:
-        """Extract both text model and projection weights as a combined state dict."""
-        combined_state = {}
+    def extract_clip_weights(sam_model) -> dict:
+        """Extract ONLY the CLIP text model weights."""
+        clip_state = {}
         
-        # Extract text model weights with prefix
+        # Extract text model weights
         for name, param in sam_model.text_model.named_parameters():
-            combined_state[f"text_model.{name}"] = param.detach().clone()
+            clip_state[f"text_model.{name}"] = param.detach().clone()
         
-        # Extract projection layer weights with prefix
+        # Extract projection layer weights  
         for name, param in sam_model.text_out_dim.named_parameters():
-            combined_state[f"projection.{name}"] = param.detach().clone()
+            clip_state[f"projection.{name}"] = param.detach().clone()
             
-        return combined_state
+        return clip_state
 
     @staticmethod
-    def save_text_weights(sam_model, filepath: str):
-        """Save combined text weights to file."""
-        weights = TextWeightExtractor.extract_combined_weights(sam_model)
-        torch.save(weights, filepath)
+    def extract_non_clip_weights(sam_model) -> dict:
+        """Extract all weights EXCEPT CLIP-related weights."""
+        non_clip_state = {}
+        
+        # Get all model parameters
+        full_state = sam_model.state_dict()
+        
+        # Filter out text_model and text_out_dim parameters
+        for name, param in full_state.items():
+            if not name.startswith('text_model.') and not name.startswith('text_out_dim.'):
+                non_clip_state[name] = param.detach().clone()
+                
+        return non_clip_state
 
+    @staticmethod
+    def save_weights(weights_dict: dict, filepath: str):
+        """Save weights to file."""
+        torch.save(weights_dict, filepath)
+        print(f"Weights saved to: {filepath}")
 
 def example_usage():
-    """Example of how to use the refactored components."""
-    filepath = "output/checkpoint/CLIP_weights_only.pth"
-
+    """Example of extracting both CLIP and non-CLIP weights."""
+    
     config = parse_args()
     device = determine_device(config)
     sam_model, predictor, image_encoder = load_model(config, device)
 
-    # Extract to standalone encoder
+    # Extract CLIP weights (as before)
+    clip_filepath = "output/checkpoint/CLIP_weights_only.pth"
+    clip_weights = TextWeightExtractor.extract_clip_weights(sam_model)
+    TextWeightExtractor.save_weights(clip_weights, clip_filepath)
+
+    # Extract non-CLIP weights (everything else)
+    non_clip_filepath = "output/checkpoint/non_CLIP_weights.pth"
+    non_clip_weights = TextWeightExtractor.extract_non_clip_weights(sam_model)
+    TextWeightExtractor.save_weights(non_clip_weights, non_clip_filepath)
+
+    # Usage example
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    standalone_encoder = StandaloneTextEncoder.from_sam_model(sam_model, device)
-    text_processor = TextProcessor(device, text_encoder=standalone_encoder)
     
-    # Save/load weights separately
-    TextWeightExtractor.save_text_weights(sam_model, filepath)
-    text_weights = torch.load(filepath, map_location=device, weights_only=True)
-
+    # Load and use CLIP weights
+    clip_weights = torch.load(clip_filepath, map_location=device, weights_only=True)
     text_encoder = StandaloneTextEncoder()
-    text_encoder.load_state_dict(text_weights)
-
+    text_encoder.load_state_dict(clip_weights)
     text_processor = TextProcessor(device, text_encoder=text_encoder)
-    text_processor.text_encoder.load_state_dict(text_weights)
     
+    # Load non-CLIP weights for other components
+    non_clip_weights = torch.load(non_clip_filepath, map_location=device, weights_only=True)
+    
+    print("Successfully separated CLIP and non-CLIP weights!")
 
 if __name__ == "__main__":
     example_usage()
