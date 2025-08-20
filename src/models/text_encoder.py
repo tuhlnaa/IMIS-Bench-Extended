@@ -73,13 +73,13 @@ class StandaloneTextEncoder(nn.Module):
         return encoder
     
 
-class TextProcessor:
+class TextProcessorV2:
     """Refactored text processor with standalone encoder."""
     
     def __init__(
         self, 
         device: torch.device,
-        text_encoder: Optional[StandaloneTextEncoder] = None,
+        text_encoder: Optional[nn.Module] = None,
         tokenizer_name: str = 'openai/clip-vit-base-patch32',
         category_weights_path: Optional[str] = None
     ):

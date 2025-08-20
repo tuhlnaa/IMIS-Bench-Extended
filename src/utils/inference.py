@@ -22,12 +22,13 @@ from src.utils.visualization import VisualizationUtils
 def load_model(config: OmegaConf, device: torch.device):
     """Load the SAM model and IMISNet."""
     try:
-        sam, image_encoder = get_sam_model(config.model.sam_model_type, config)
-        sam, image_encoder = sam.to(device), image_encoder.to(device)
+        sam, image_encoder, text_encoder = get_sam_model(config.model.sam_model_type, config)
+        sam, image_encoder, text_encoder = sam.to(device), image_encoder.to(device), text_encoder.to(device)
 
         imis_net = IMISNet(
             config, 
             sam, 
+            text_encoder,
             test_mode=config.model.test_mode, 
             category_weights=config.category_weights_path
         ).to(device)

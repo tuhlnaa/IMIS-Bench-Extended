@@ -13,6 +13,7 @@ from omegaconf import OmegaConf
 
 # Import custom modules
 from dataloaders.data_utils import get_points_from_mask, get_bboxes_from_mask
+from src.models.text_encoder import TextProcessorV2
 
 
 @dataclass
@@ -238,6 +239,7 @@ class IMISNet(nn.Module):
         self,
         config: OmegaConf,
         sam: nn.Module,
+        text_model,
         test_mode: bool = False,
         multimask_output: bool = True,
         category_weights: Optional[str] = None,
@@ -250,8 +252,7 @@ class IMISNet(nn.Module):
         self.image_encoder = sam.image_encoder
         self.mask_decoder = sam.mask_decoder
         self.prompt_encoder = sam.prompt_encoder
-        self.text_model = sam.text_model
-        self.text_out_dim = sam.text_out_dim
+        self.text_model = text_model
         
         # Configuration
         self.category_weights = category_weights
@@ -262,18 +263,9 @@ class IMISNet(nn.Module):
         
         # Initialize processors
         self.prompt_processor = PromptProcessor(self.device, test_mode)
-        self.text_processor = TextProcessor(self.device, category_weights_path=self.category_weights)
-        
-    #     # Freeze text model parameters
-    #     self._freeze_text_model()
-    
+        self.text_processor = TextProcessorV2(self.device, text_encoder=text_model, category_weights_path=self.category_weights)
 
-    # def _freeze_text_model(self) -> None:
-    #     """Freeze text model parameters."""
-    #     for param in self.text_model.parameters():
-    #         param.requires_grad = False
-    
-    
+
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
         """Encode input image to embeddings."""
         batch_size = image.shape[0]
@@ -404,13 +396,9 @@ class IMISNet(nn.Module):
         
         # Generate specific prompt type
         if specify_prompt == 'points':
-            prompts.update(
-                self.prompt_processor.process_points_prompt(labels, pred_masks)
-            )
+            prompts.update(self.prompt_processor.process_points_prompt(labels, pred_masks))
         elif specify_prompt == 'text' and classes is not None:
-            text_embedding = self.text_processor.tokenize_text(
-                classes, self.text_model, self.text_out_dim
-            )
+            text_embedding = self.text_processor.tokenize_text(classes)
             prompts['text_inputs'] = text_embedding
         elif specify_prompt == 'bboxes':
             prompts.update(self.prompt_processor.process_bboxes_prompt(labels))
@@ -463,4 +451,4 @@ class IMISNet(nn.Module):
         """Tokenize text (backward compatibility)."""
         if template:
             self.text_processor.template = template
-        return self.text_processor.tokenize_text(text, self.text_model, self.text_out_dim)
+        return self.text_processor.tokenize_text(text)

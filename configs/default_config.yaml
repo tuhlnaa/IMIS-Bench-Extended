@@ -2,7 +2,7 @@
 
 data_dir: "D:/Kai/DATA_Set_2/medical-segmentation/BTCV"
 
-checkpoint_path: "output/checkpoint/IMISNet-B.pth"
+checkpoint_path: "output/checkpoint/non_CLIP_weights.pth" #"output/checkpoint/IMISNet-B.pth"
 checkpoint_vit_path: "output/checkpoint/vit_b_weights_only.pth"
 checkpoint_clip_path: "output/checkpoint/CLIP_weights_only.pth"
 category_weights_path: "dataloaders/categories_weight.pkl"

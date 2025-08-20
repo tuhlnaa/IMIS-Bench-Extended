@@ -8,7 +8,7 @@ sys.path.append(str(PROJECT_ROOT))
 
 from configs.config import parse_args
 from src.utils.inference import determine_device, load_model
-from src.models.text_encoder import StandaloneTextEncoder, TextProcessor
+from src.models.text_encoder import StandaloneTextEncoder, TextProcessorV2
 
 class TextWeightExtractor:
     """Utility class for extracting and managing text model weights."""
@@ -73,7 +73,7 @@ def example_usage():
     clip_weights = torch.load(clip_filepath, map_location=device, weights_only=True)
     text_encoder = StandaloneTextEncoder()
     text_encoder.load_state_dict(clip_weights)
-    text_processor = TextProcessor(device, text_encoder=text_encoder)
+    text_processor = TextProcessorV2(device, text_encoder=text_encoder)
     
     # Load non-CLIP weights for other components
     non_clip_weights = torch.load(non_clip_filepath, map_location=device, weights_only=True)
