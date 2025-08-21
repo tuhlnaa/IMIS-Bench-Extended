@@ -177,8 +177,8 @@ class ClassificationHandler:
     
     def _setup_category_mapping(self) -> Optional[Dict[int, str]]:
         """Setup category mapping if model supports it."""
-        if hasattr(self.model, 'category_weights') and self.model.category_weights is not None:
-            if hasattr(self.model, 'text_processor'):
+        if self.model.category_weights is not None:
+            if self.model.text_processor is not None:
                 return self.model.text_processor.index_to_category
         return None
     
@@ -206,7 +206,7 @@ class ClassificationHandler:
 class IMISPredictor:
     """Orchestrates the above components for end-to-end prediction"""
     
-    def __init__(self, config: OmegaConf, imis_model: nn.Module, encode_image, decode_masks):
+    def __init__(self, config: OmegaConf, imis_model: nn.Module, decode_masks):
         """Initialize the predictor with a SAM model.
         
         Args:
@@ -214,7 +214,6 @@ class IMISPredictor:
         """
         self.config = config
         self.model = imis_model
-        self.encode_image = encode_image
         self.decode_masks = decode_masks
         self.device = imis_model.device
         
@@ -297,8 +296,7 @@ class IMISPredictor:
         """Generate mask predictions using torch tensors."""
         # Build prompt dictionary
         prompt = self.prompt_processor.build_prompt_dict(
-            point_coords, point_labels, text, mask_input,
-            getattr(self.model, 'text_tokenizer', None)
+            point_coords, point_labels, text, mask_input, self.model.text_tokenizer
         )
         
         # Process boxes if provided

@@ -13,7 +13,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 # Import custom modules
 from model import IMISNet
-from script.Extract_ViT_weights import load_vit_with_extracted_weights
 from segment_anything.build_sam import get_sam_model
 from segment_anything.predictor import IMISPredictor, ImagePreprocessor
 from src.utils.visualization import VisualizationUtils
@@ -36,7 +35,7 @@ def load_model(config: OmegaConf, device: torch.device):
         if config.device.multi_gpu.enabled:
             imis = DDP(imis, device_ids=[config.device.multi_gpu.rank], output_device=config.device.multi_gpu.rank)
 
-        predictor = IMISPredictor(config, imis_net, imis_net.encode_image, imis_net.decode_masks)
+        predictor = IMISPredictor(config, imis_net, imis_net.decode_masks)
         print(f"[blue]Model loaded successfully on {device}[/blue]")
         
     except Exception as e:
