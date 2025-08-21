@@ -136,7 +136,7 @@ class IMISNet(nn.Module):
         self,
         config: OmegaConf,
         sam: nn.Module,
-        text_model,
+        text_model: nn.Module,
         test_mode: bool = False,
         multimask_output: bool = True,
         category_weights: Optional[str] = None,
@@ -257,10 +257,19 @@ class IMISNet(nn.Module):
         return selected_masks, max_values, selected_semantic
     
 
-    def forward(self, image: torch.Tensor, prompt: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+    def forward(
+            self, 
+            image: torch.Tensor, 
+            prompt: Dict[str, Any], 
+            image_embedding: torch.Tensor = None,
+            mode: str = 'full'
+        ) -> Dict[str, torch.Tensor]:
         """Forward pass of the network."""
-        image_embedding = self.encode_image(image)
-        return self.decode_masks(image_embedding, prompt)
+        if mode == 'full':
+            image_embedding = self.encode_image(image)
+            return self.decode_masks(image_embedding, prompt)
+        else:
+            return self.decode_masks(image_embedding, prompt)
     
 
     def generate_prompts(

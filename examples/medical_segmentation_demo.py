@@ -8,14 +8,17 @@ PROJECT_ROOT = Path(__file__).parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
 from configs.config import parse_args
-from src.utils.inference import run_interactive_demo
+from src.utils.inference import InteractiveSegmentationSession
 
 
 def main():
     # Initialize configuration
     config = parse_args()
+    
+    # Initialize session once
+    session = InteractiveSegmentationSession(config, output_dir="output")
 
-    examples = [
+    examples1 = [
         # Single-step examples
         {
             'name': 'Single click segmentation',
@@ -84,24 +87,14 @@ def main():
         }
     ]
 
-    results = run_interactive_demo(config, "data/samples/train_177_51.png", examples)
-    
-    # Print summary of results
-    print(f"\n=== Summary ===")
-    print(f"Total examples processed: {len(results)}")
-    for name, result in results.items():
-        print(f"- {name}: Category {result['category_pred']}")
-
-    examples = [
+    examples2 = [
         {
             'name': 'Multiple bounding boxes segmentation',
             'bounding_box': np.array([[87, 228, 140, 297], [408, 226, 459, 276], [170, 212, 225, 260], [215, 192, 312, 240]])
         }
     ]
-
-    results = run_interactive_demo(config, "data/samples/ABD_001_67.png", examples)
     
-    examples = [
+    examples3 = [
         {
             'name': 'Single click segmentation',
             'points': np.array([[304, 148]]),
@@ -113,16 +106,24 @@ def main():
         }     
     ]
 
-    results = run_interactive_demo(config, "data/samples/lung_005_160.png", examples)
-
-    examples = [
+    examples4 = [
         {
             'name': 'Single click segmentation',
             'points': np.array([[116, 158]]),
             'labels': np.array([1]),
         }
     ]
-    results = run_interactive_demo(config, "data/samples/ISIC_0012092.jpg", examples)
+
+    results1 = session.process_image_with_examples("data/samples/train_177_51.png", examples1)
+    results2 = session.process_image_with_examples("data/samples/ABD_001_67.png", examples2)
+    results3 = session.process_image_with_examples("data/samples/lung_005_160.png", examples3)
+    results4 = session.process_image_with_examples("data/samples/ISIC_0012092.jpg", examples4)
+
+    # Print summary of results
+    print(f"\n=== Summary ===")
+    print(f"Total examples processed: {len(results1)}")
+    for name, result in results1.items():
+        print(f"- {name}: Category {result['category_pred']}")
 
 
 if __name__ == "__main__":

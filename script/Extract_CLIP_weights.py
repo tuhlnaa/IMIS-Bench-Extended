@@ -49,6 +49,7 @@ class TextWeightExtractor:
         torch.save(weights_dict, filepath)
         print(f"Weights saved to: {filepath}")
 
+
 def example_usage():
     """Example of extracting both CLIP and non-CLIP weights."""
     
@@ -79,6 +80,7 @@ def example_usage():
     non_clip_weights = torch.load(non_clip_filepath, map_location=device, weights_only=True)
     
     print("Successfully separated CLIP and non-CLIP weights!")
+
 
 if __name__ == "__main__":
     example_usage()

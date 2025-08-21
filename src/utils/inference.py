@@ -1,15 +1,14 @@
 # src/utils/inference.py
 import torch
 import numpy as np
-
 from matplotlib import pyplot as plt
 from omegaconf import OmegaConf
 from pathlib import Path
 from PIL import Image
 from rich import print
-from typing import Optional, Tuple
-from typing import Dict, Any, List, Tuple
+from typing import Optional, Tuple, Dict, Any, List
 from torch.nn.parallel import DistributedDataParallel as DDP
+from dataclasses import dataclass
 
 # Import custom modules
 from model import IMISNet
@@ -17,7 +16,122 @@ from segment_anything.build_sam import get_sam_model
 from segment_anything.predictor import IMISPredictor, ImagePreprocessor
 from src.utils.visualization import VisualizationUtils
 
+@dataclass
+class ImageState:
+    """Holds preprocessed image state to avoid reprocessing"""
+    image: np.ndarray
+    input_tensor: torch.Tensor
+    features: torch.Tensor
+    original_size: tuple
+    image_path: str
 
+
+class InteractiveSegmentationSession:
+    """
+    Main refactoring approach: Session-based management
+    Separates model initialization from image processing and example execution.
+    """
+    
+    def __init__(self, config: OmegaConf, output_dir: str = "output"):
+        self.config = config
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize model components once
+        self.device = determine_device(config)
+        self.model, self.predictor, self.image_encoder = load_model(config, self.device)
+        self.image_preprocessor = ImagePreprocessor(
+            image_size=(config.model.image_size, config.model.image_size)
+        )
+        
+        # State management
+        self.current_image_state: Optional[ImageState] = None
+        
+        print(f"[green]Session initialized successfully[/green]")
+    
+
+    def load_image(self, image_path: str) -> ImageState:
+        """Load and preprocess image, caching the result"""
+        image_path = Path(image_path)
+        
+        # Check if we already have this image loaded
+        if (self.current_image_state is not None and 
+            self.current_image_state.image_path == str(image_path)):
+            print(f"[yellow]Image already loaded: {image_path.name}[/yellow]")
+            return self.current_image_state
+        
+        print(f"[blue]Loading new image: {image_path.name}[/blue]")
+        
+        # Load and preprocess image
+        image = Image.open(image_path).convert('RGB')
+        image_array = np.array(image)
+        
+        # Preprocess and encode
+        input_tensor = self.image_preprocessor.preprocess_image(image_array, "RGB")
+        features = self.image_encoder(input_tensor.to(self.device))
+        
+        # Update predictor state
+        self.predictor.features = features
+        self.predictor.original_size = image_array.shape[:2]
+        self.predictor.is_image_set = True
+        
+        # Cache the state
+        self.current_image_state = ImageState(
+            image=image_array,
+            input_tensor=input_tensor,
+            features=features,
+            original_size=image_array.shape[:2],
+            image_path=str(image_path)
+        )
+        
+        return self.current_image_state
+    
+
+    def run_examples(self, examples: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Run examples on currently loaded image"""
+        if self.current_image_state is None:
+            raise ValueError("No image loaded. Call load_image() first.")
+        
+        # Initialize visualization utils
+        image_path = Path(self.current_image_state.image_path)
+        vis_utils = VisualizationUtils(self.output_dir, image_path.stem)
+        
+        # Display original image
+        plt.figure()
+        plt.imshow(self.current_image_state.image)
+        vis_utils.save_plot("Original Image", "original")
+        
+        # Process examples
+        results = {}
+        for example in examples:
+            if example.get('workflow_type') == 'multistep':
+                masks, logits, category_pred = run_workflow_chain(
+                    self.config, self.predictor, vis_utils, 
+                    self.current_image_state.image, example['steps']
+                )
+            else:
+                masks, logits, category_pred = run_segmentation(
+                    self.config, self.predictor, vis_utils, 
+                    self.current_image_state.image, example
+                )
+            
+            results[example['name']] = {
+                'masks': masks,
+                'logits': logits,
+                'category_pred': category_pred
+            }
+        
+        print(f"\nExamples completed for {image_path.name}")
+        return results
+    
+
+    def process_image_with_examples(self, image_path: str, examples: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Convenience method: load image and run examples in one call"""
+        self.load_image(image_path)
+        return self.run_examples(examples)
+
+
+# Keep original functions for backward compatibility and internal use
 def load_model(config: OmegaConf, device: torch.device):
     """Load the SAM model and IMISNet."""
     try:
@@ -33,7 +147,8 @@ def load_model(config: OmegaConf, device: torch.device):
         ).to(device)
 
         if config.device.multi_gpu.enabled:
-            imis = DDP(imis, device_ids=[config.device.multi_gpu.rank], output_device=config.device.multi_gpu.rank)
+            imis_net = DDP(imis_net, device_ids=[config.device.multi_gpu.rank], 
+                          output_device=config.device.multi_gpu.rank)
 
         predictor = IMISPredictor(config, imis_net, imis_net.decode_masks)
         print(f"[blue]Model loaded successfully on {device}[/blue]")
@@ -45,17 +160,15 @@ def load_model(config: OmegaConf, device: torch.device):
 
 
 def determine_device(config: OmegaConf = None, verbose: bool = True) -> torch.device:
-    """
-    Determine the appropriate PyTorch device based on configuration and hardware availability.
-    """
-    # Determine device
+    """Determine the appropriate PyTorch device based on configuration and hardware availability."""
     if config.device.device:
         device = torch.device(config.device.device)
     elif torch.cuda.is_available():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-        
+    print(f"[bold blue]Device used: {device}[/bold blue]")
+
     if config.device.multi_gpu.enabled:
         config.device.world_size = config.device.multi_gpu.nodes * len(config.device.multi_gpu.gpu_ids)
 
@@ -63,80 +176,15 @@ def determine_device(config: OmegaConf = None, verbose: bool = True) -> torch.de
         gpu_name = torch.cuda.get_device_name(0)
         print(f"[bold blue]GPU: {gpu_name}[/bold blue]")
         
-        # Check compute capability
         major, minor = torch.cuda.get_device_capability(0)
         print(f"[bold blue]Compute capability: {major}.{minor}[/bold blue]")
         
-        # FlashAttention V2 needs compute capability >= 8.0 (Ampere+)
         if major >= 8:
             print("[bold green]✅ Compatible with FlashAttention V2[/bold green]")
         else:
             print("[bold red]❌ Not compatible with FlashAttention V2[/bold red]")
     
     return device
-
-
-def run_interactive_demo(
-    config: OmegaConf,
-    image_path: str,
-    examples: List[Dict[str, Any]],
-    output_dir: str = "output",
-) -> Dict[str, Dict[str, Any]]:
-    """Run interactive segmentation demonstration with declarative multi-step workflows."""
-
-    image_path = Path(image_path)
-    output_path = Path(output_dir)
-
-    # Create output directory if it doesn't exist
-    output_path.mkdir(parents=True, exist_ok=True)
-    filename_stem = image_path.stem
-
-    # Initialize model
-    device = determine_device(config)
-    _, predictor, image_encoder = load_model(config, device)
-
-    # Initialize components
-    vis_utils = VisualizationUtils(output_path, filename_stem)
-
-    # Load and display original image
-    image = Image.open(image_path).convert('RGB')
-    image_array = np.array(image)
-
-    plt.figure()
-    plt.imshow(image)
-    vis_utils.save_plot("Original Image", "original")
-
-    # Preprocess image
-    image_preprocessor = ImagePreprocessor(image_size=(config.model.image_size, config.model.image_size))
-    input_tensor = image_preprocessor.preprocess_image(image_array, "RGB")
-    
-    # Encode image
-    predictor.features = image_encoder(input_tensor.to(device))
-    predictor.original_size = image_array.shape[:2]
-    predictor.is_image_set = True
-
-    # Process all examples using unified logic
-    results = {}
-    for example in examples:
-        if example.get('workflow_type') == 'multistep':
-            # Handle multi-step workflow
-            masks, logits, category_pred = run_workflow_chain(config, predictor, vis_utils, image, example['steps'])
-            results[example['name']] = {
-                'masks': masks,
-                'logits': logits,
-                'category_pred': category_pred
-            }
-        else:
-            # Handle single-step example
-            masks, logits, category_pred = run_segmentation(config, predictor, vis_utils, image, example)
-            results[example['name']] = {
-                'masks': masks,
-                'logits': logits,
-                'category_pred': category_pred
-            }
-
-    print(f"\nSegmentation demonstration completed. Results saved to {output_path}")
-    return results
 
 
 def run_workflow_chain(
@@ -146,22 +194,10 @@ def run_workflow_chain(
         image: np.ndarray,
         workflow_steps: List[Dict[str, Any]],
     ) -> Tuple[np.ndarray, np.ndarray, str]:
-    """
-    Run a chain of segmentation steps where each step can use results from previous steps.
-    
-    Args:
-        model: MedicalImageSegmentation instance
-        vis_utils: VisualizationUtils instance
-        image: Input image array
-        workflow_steps: List of workflow step dictionaries
-    
-    Returns:
-        tuple: (final_masks, final_logits, final_category_pred)
-    """
+    """Run a chain of segmentation steps where each step can use results from previous steps."""
     previous_logits = None
     
     for i, step in enumerate(workflow_steps):
-        # Create a copy to avoid modifying the original
         current_step = step.copy()
         
         # Add previous logits as mask_input if requested and available
@@ -169,7 +205,7 @@ def run_workflow_chain(
             previous_logits is not None and 
             'mask_input' not in current_step):
             current_step['mask_input'] = previous_logits
-        
+            
         # Remove the flag as it's not needed for the actual segmentation
         current_step.pop('use_previous_logits', None)
         
@@ -186,19 +222,7 @@ def run_segmentation(
         image: np.ndarray,
         example: Dict[str, Any], 
     ) -> Tuple[np.ndarray, np.ndarray, str]:
-    """
-    Unified function to run segmentation with any input type and visualize results.
-    Automatically handles single or multiple text prompts.
-    
-    Args:
-        model: MedicalImageSegmentation instance
-        vis_utils: VisualizationUtils instance
-        image: Input image array
-        example: Dictionary containing segmentation parameters
-    
-    Returns:
-        tuple: (masks, logits, category_pred)
-    """
+    """Unified function to run segmentation with any input type and visualize results."""
     print(f"\n=== {example['name']} ===")
     
     # Extract parameters with defaults
@@ -222,7 +246,6 @@ def run_segmentation(
             
             multimask_output = config.prediction.multimask_output
 
-            # Run prediction for single text prompt
             single_masks, single_logits, single_category_pred = model.predict(
                 point_coords=point_coords,
                 point_labels=point_labels,
@@ -239,7 +262,7 @@ def run_segmentation(
         # Concatenate all masks along the first axis
         masks = np.concatenate(masks_list, axis=0)
         logits = np.concatenate(logits_list, axis=0)
-        
+
         # For category prediction, you might want to combine them or take the first
         # This depends on your specific use case
         category_pred = category_preds[0] if category_preds else None
@@ -271,9 +294,27 @@ def run_segmentation(
     # Remove None values
     vis_kwargs = {k: v for k, v in vis_kwargs.items() if v is not None}
     
-    # Visualize results - handle multiple masks
+    # Visualize results
     vis_utils.visualize_result(
         image, masks, f"{example['name']} Result", "segmentation", **vis_kwargs
     )
     
     return masks, logits, category_pred
+
+
+# Backward compatibility function (deprecated)
+def run_interactive_demo(
+    config: OmegaConf,
+    image_path: str,
+    examples: List[Dict[str, Any]],
+    output_dir: str = "output",
+) -> Dict[str, Dict[str, Any]]:
+    """
+    DEPRECATED: Use InteractiveSegmentationSession for better performance.
+    This function is kept for backward compatibility.
+    """
+    print("[yellow]Warning: run_interactive_demo is deprecated. Use InteractiveSegmentationSession for better performance.[/yellow]")
+    
+    session = InteractiveSegmentationSession(config, output_dir)
+    return session.process_image_with_examples(image_path, examples)
+
