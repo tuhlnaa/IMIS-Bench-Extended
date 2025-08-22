@@ -7,7 +7,6 @@ import torch.nn.functional as F
 import numpy as np
 
 from dataclasses import dataclass
-from transformers import AutoTokenizer
 from typing import Dict, Optional, Tuple, List, Any
 from omegaconf import OmegaConf
 
@@ -187,7 +186,7 @@ class IMISNet(nn.Module):
 
     def decode_masks(
         self, 
-        image_embedding: torch.Tensor, 
+        image_embedding: torch.Tensor, # shape=[1, 768, 64, 64]
         prompt: Dict[str, Any]
     ) -> Dict[str, torch.Tensor]:
         """Decode masks from image embeddings and prompts."""
@@ -195,14 +194,15 @@ class IMISNet(nn.Module):
         # Prepare prompts
         points = None
         if prompt.get("point_coords") is not None:
+            # shape=[1, 1, 2], [1, 1] or None
             points = (prompt["point_coords"], prompt["point_labels"])
         
         # Encode prompts
         sparse_embeddings, dense_embeddings = self.prompt_encoder(
-            points=points,
-            boxes=prompt.get("bboxes"),
-            masks=prompt.get("mask_inputs"),
-            text=prompt.get("text_inputs")
+            points=points,  
+            boxes=prompt.get("bboxes"),  # shape=[1, 1, 4] or None
+            masks=prompt.get("mask_inputs"),  # shape=[1, 1, 256, 256] or None
+            text=prompt.get("text_inputs")  # shape=[1, 768] or None
         )
 
         # Decode masks
@@ -328,6 +328,7 @@ class IMISNet(nn.Module):
             'unsupervised', pseudo_labels, None, pred_masks, low_res_masks, specify_prompt
         )
     
+
     # Delegate methods to processors for backward compatibility
     def category_loss(
         self, 
@@ -346,85 +347,243 @@ class IMISNet(nn.Module):
         return self.text_processor.tokenize_text(text)
 
 
-class MaskDecoderWrapperONNXOptimized(nn.Module):
-    """
-    ONNX-optimized version that avoids Python conditionals by using tensor operations.
-    This version is more ONNX-friendly as it avoids .item() calls and Python conditionals.
-    """
+class MaskDecoderONNX(nn.Module):
+    """ONNX-compatible wrapper for IMISNet mask decoding."""
     
-    def __init__(self, imis_net):
+    def __init__(self, imisnet_model):
         super().__init__()
-        self.imis_net = imis_net
-        self.image_size = imis_net.image_size
+        self.image_encoder = imisnet_model.image_encoder
+        self.mask_decoder = imisnet_model.mask_decoder
+        self.prompt_encoder = imisnet_model.prompt_encoder
+        self.multimask_output = imisnet_model.multimask_output
+        self.image_size = imisnet_model.image_size
         
     def forward(
         self,
         image_embedding: torch.Tensor,
-        # Always provide all prompt types, use masks to indicate which ones are active
-        point_coords: torch.Tensor,     # [N, 2]
-        point_labels: torch.Tensor,     # [N] 
-        bboxes: torch.Tensor,           # [M, 4]
-        text_inputs: torch.Tensor,      # [1, D]
-        mask_inputs: torch.Tensor,      # [1, H, W]
-        # Boolean masks indicating which prompts are active (1.0 = active, 0.0 = inactive)
-        use_points: torch.Tensor,       # scalar tensor: 1.0 or 0.0
-        use_bboxes: torch.Tensor,       # scalar tensor: 1.0 or 0.0  
-        use_text: torch.Tensor,         # scalar tensor: 1.0 or 0.0
-        use_mask: torch.Tensor,         # scalar tensor: 1.0 or 0.0
-    ) -> torch.Tensor:
+        # Point prompts
+        point_coords: torch.Tensor,  # [B, N, 2] - use zeros if no points
+        point_labels: torch.Tensor,  # [B, N] - use -1 if no points
+        has_points: torch.Tensor,    # [B] - 1 if has points, 0 otherwise
+        # Box prompts
+        boxes: torch.Tensor,         # [B, 4] - use zeros if no boxes
+        has_boxes: torch.Tensor,     # [B] - 1 if has boxes, 0 otherwise
+        # Mask prompts
+        mask_inputs: torch.Tensor,   # [B, 1, H, W] - use zeros if no mask
+        has_mask: torch.Tensor,      # [B] - 1 if has mask, 0 otherwise
+        # Text prompts
+        text_inputs: torch.Tensor,   # [B, embed_dim] - use zeros if no text
+        has_text: torch.Tensor,      # [B] - 1 if has text, 0 otherwise
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        ONNX-optimized forward pass using tensor operations instead of conditionals.
+        ONNX-compatible forward pass.
         
-        Returns only masks for simplicity in ONNX deployment.
+        Returns:
+            - masks: [B, 1, H, W] - upsampled masks
+            - low_res_masks: [B, 1, H_low, W_low] - low resolution masks
+            - iou_pred: [B, 1] - IoU predictions
+            - semantic_pred: [B, 1, 512] - semantic predictions
         """
+        batch_size = image_embedding.shape[0]
         
-        # Create prompt dictionary - ONNX will optimize away unused branches
-        prompt = {}
-        
-        # Use tensor operations to conditionally include prompts
-        # When use_points is 0, point_coords/labels will be ignored by the model
-        points = None
-        if torch.any(use_points > 0):
-            # Mask point coordinates and labels when not in use
-            masked_coords = point_coords * use_points.unsqueeze(-1)
-            masked_labels = point_labels * use_points.long()
-            points = (masked_coords, masked_labels)
-        
-        # Similarly for other prompt types
-        boxes = bboxes * use_bboxes.unsqueeze(-1) if torch.any(use_bboxes > 0) else None
-        text = text_inputs * use_text.unsqueeze(-1) if torch.any(use_text > 0) else None  
-        mask = mask_inputs * use_mask.unsqueeze(-1).unsqueeze(-1) if torch.any(use_mask > 0) else None
-        
-        # Encode prompts
-        sparse_embeddings, dense_embeddings = self.imis_net.prompt_encoder(
-            points=points,
-            boxes=boxes, 
-            masks=mask,
-            text=text
+        # Process prompts conditionally
+        sparse_embeddings, dense_embeddings = self._encode_prompts(
+            point_coords, point_labels, has_points,
+            boxes, has_boxes,
+            mask_inputs, has_mask,
+            text_inputs, has_text,
+            batch_size
         )
         
         # Decode masks
-        outputs = self.imis_net.mask_decoder(
+        low_res_masks, iou_pred, semantic_pred = self.mask_decoder(
             image_embeddings=image_embedding,
-            image_pe=self.imis_net.prompt_encoder.get_dense_pe(),
-            text_prompt_embeddings=text,
+            image_pe=self.prompt_encoder.get_dense_pe(),
+            text_prompt_embeddings=text_inputs,
             sparse_prompt_embeddings=sparse_embeddings,
             dense_prompt_embeddings=dense_embeddings,
-            multimask_output=self.imis_net.multimask_output
+            multimask_output=self.multimask_output
         )
         
         # Select best mask if multi-mask output
-        if self.imis_net.multimask_output:
-            low_res_masks, _, _ = self.imis_net._select_best_mask(outputs)
-        else:
-            low_res_masks = outputs['low_res_masks']
+        if self.multimask_output:
+            low_res_masks, iou_pred, semantic_pred = self._select_best_mask(
+                low_res_masks, iou_pred, semantic_pred
+            )
         
         # Upsample masks to original size
         masks = F.interpolate(
             low_res_masks, 
-            size=self.imis_net.image_size, 
+            size=self.image_size, 
             mode='bilinear', 
             align_corners=False
         )
         
-        return masks.float()
+        return masks, low_res_masks, iou_pred, semantic_pred
+    
+    def _encode_prompts(
+        self,
+        point_coords: torch.Tensor,
+        point_labels: torch.Tensor,
+        has_points: torch.Tensor,
+        boxes: torch.Tensor,
+        has_boxes: torch.Tensor,
+        mask_inputs: torch.Tensor,
+        has_mask: torch.Tensor,
+        text_inputs: torch.Tensor,
+        has_text: torch.Tensor,
+        batch_size: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Encode prompts with ONNX-compatible conditionals."""
+        
+        device = self.prompt_encoder.device
+        embed_dim = self.prompt_encoder.embed_dim
+        
+        # Initialize sparse embeddings
+        sparse_embeddings = torch.zeros(
+            (batch_size, 0, embed_dim), 
+            device=device, 
+            dtype=torch.float32
+        )
+        
+        # Process points conditionally
+        point_embeddings = self._process_points(
+            point_coords, point_labels, has_points, has_boxes
+        )
+        
+        sparse_embeddings = torch.cat([sparse_embeddings, point_embeddings], dim=1)
+        
+        # Process boxes conditionally
+        box_embeddings = self._process_boxes(boxes, has_boxes)
+        sparse_embeddings = torch.cat([sparse_embeddings, box_embeddings], dim=1)
+        
+        # Process text conditionally
+        text_embeddings = self._process_text(text_inputs, has_text)
+        sparse_embeddings = torch.cat([sparse_embeddings, text_embeddings], dim=1)
+        
+        # Process masks conditionally
+        dense_embeddings = self._process_masks(mask_inputs, has_mask, batch_size)
+        
+        return sparse_embeddings, dense_embeddings
+    
+    def _process_points(
+        self,
+        point_coords: torch.Tensor,
+        point_labels: torch.Tensor,
+        has_points: torch.Tensor,
+        has_boxes: torch.Tensor
+    ) -> torch.Tensor:
+        """Process point prompts with ONNX-compatible conditionals."""
+
+        # Process points for all batches (will mask out later)
+        all_point_embeddings = self.prompt_encoder._embed_points(
+            point_coords, point_labels
+        )
+        
+        # Mask out embeddings where has_points is False
+        mask = has_points.unsqueeze(1).unsqueeze(2).expand_as(all_point_embeddings)
+        point_embeddings = torch.where(
+            mask.bool(),
+            all_point_embeddings,
+            torch.zeros_like(all_point_embeddings)
+        )
+        
+        # For batches without points, return empty embeddings
+        # This is tricky in ONNX - we'll keep the embeddings but zero them out
+        return point_embeddings
+
+
+    def _process_boxes(
+        self,
+        boxes: torch.Tensor,
+        has_boxes: torch.Tensor
+    ) -> torch.Tensor:
+        """Process box prompts with ONNX-compatible conditionals."""
+        batch_size = boxes.shape[0]
+        embed_dim = self.prompt_encoder.embed_dim
+        device = self.prompt_encoder.device
+        
+        # Process boxes for all batches
+        all_box_embeddings = self.prompt_encoder._embed_boxes(boxes)
+        
+        # Mask out embeddings where has_boxes is False
+        mask = has_boxes.unsqueeze(1).unsqueeze(2).expand_as(all_box_embeddings)
+        box_embeddings = torch.where(
+            mask.bool(),
+            all_box_embeddings,
+            torch.zeros_like(all_box_embeddings)
+        )
+        
+        return box_embeddings
+    
+    def _process_text(
+        self,
+        text_inputs: torch.Tensor,
+        has_text: torch.Tensor
+    ) -> torch.Tensor:
+        """Process text prompts with ONNX-compatible conditionals."""
+        batch_size = text_inputs.shape[0]
+        embed_dim = self.prompt_encoder.embed_dim
+        device = self.prompt_encoder.device
+        
+        # Expand text inputs to match expected shape
+        text_embeddings = text_inputs.unsqueeze(1)  # [B, 1, embed_dim]
+        
+        # Mask out embeddings where has_text is False
+        mask = has_text.unsqueeze(1).unsqueeze(2).expand_as(text_embeddings)
+        text_embeddings = torch.where(
+            mask.bool(),
+            text_embeddings,
+            torch.zeros_like(text_embeddings)
+        )
+        
+        return text_embeddings
+    
+    def _process_masks(
+        self,
+        mask_inputs: torch.Tensor,
+        has_mask: torch.Tensor,
+        batch_size: int
+    ) -> torch.Tensor:
+        """Process mask prompts with ONNX-compatible conditionals."""
+        embed_dim = self.prompt_encoder.embed_dim
+        device = self.prompt_encoder.device
+        h, w = self.prompt_encoder.image_embedding_size
+        
+        # Process masks for all batches
+        processed_masks = self.prompt_encoder._embed_masks(mask_inputs)
+        
+        # Create no-mask embedding
+        no_mask_embed = self.prompt_encoder.no_mask_embed.weight.reshape(1, -1, 1, 1).expand(
+            batch_size, -1, h, w
+        )
+        
+        # Use mask embeddings where has_mask is True, otherwise use no_mask_embed
+        mask = has_mask.unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(processed_masks)
+        dense_embeddings = torch.where(
+            mask.bool(),
+            processed_masks,
+            no_mask_embed
+        )
+        
+        return dense_embeddings
+    
+    def _select_best_mask(
+        self,
+        low_res_masks: torch.Tensor,
+        iou_pred: torch.Tensor,
+        semantic_pred: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Select the best mask based on IoU predictions."""
+        # Find best mask index
+        max_values, max_indices = torch.max(iou_pred, dim=1, keepdim=True)
+        
+        # Gather corresponding masks and predictions
+        mask_shape = (low_res_masks.shape[2], low_res_masks.shape[3])
+        low_mask_indices = max_indices.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, *mask_shape)
+        semantic_indices = max_indices.unsqueeze(-1).expand(-1, -1, 512)
+        
+        selected_masks = torch.gather(low_res_masks, 1, low_mask_indices)
+        selected_semantic = torch.gather(semantic_pred, 1, semantic_indices)
+        
+        return selected_masks, max_values, selected_semantic

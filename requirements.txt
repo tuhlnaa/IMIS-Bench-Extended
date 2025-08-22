@@ -1,4 +1,35 @@
-# Usage: pip install -r requirements.txt
+# Usage:
+
+# [Windows] - PowerShell
+# Get-Content requirements.txt | ForEach-Object {
+#     if ($_ -match "\S" -and -not $_.StartsWith("#")) {
+#         Write-Host "Installing $_..." -ForegroundColor Cyan
+#         pip install $_
+#     }
+# }
+
+# [Linux]
+# while read line; do
+#   # Skip empty lines and comments
+#   if [[ -n "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
+#     echo "Installing $line..."
+#     pip install $line
+#   fi
+# done < requirements.txt
+
+torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+omegaconf==2.3.0
+tensorboard==2.20.0
+rich==14.1.0
+tqdm==4.67.1
+matplotlib==3.10.5
+
+scipy==1.16.1
+monai==1.5.0
+transformers==4.55.3
+timm==1.0.19
+onnx==1.18.0
+onnxscript==0.3.2
 
 gradio==3.38.0
 ffmpeg-python>=0.2.0

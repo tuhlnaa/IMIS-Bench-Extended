@@ -80,7 +80,7 @@ class PromptEncoder(nn.Module):
         self,
         points: torch.Tensor,
         labels: torch.Tensor,
-        pad: bool,
+        pad: bool = True,
     ) -> torch.Tensor:
         """
         Embed point prompts.
@@ -97,11 +97,16 @@ class PromptEncoder(nn.Module):
         points = points + 0.5
         
         # Add padding if needed
-        if pad:
-            padding_point = torch.zeros((points.shape[0], 1, 2), device=points.device)
-            padding_label = -torch.ones((labels.shape[0], 1), device=labels.device)
-            points = torch.cat([points, padding_point], dim=1)
-            labels = torch.cat([labels, padding_label], dim=1)
+        # if pad:
+        #     padding_point = torch.zeros((points.shape[0], 1, 2), device=points.device)
+        #     padding_label = -torch.ones((labels.shape[0], 1), device=labels.device)
+        #     points = torch.cat([points, padding_point], dim=1)
+        #     labels = torch.cat([labels, padding_label], dim=1)
+
+        padding_point = torch.zeros((points.shape[0], 1, 2), device=points.device)
+        padding_label = -torch.ones((labels.shape[0], 1), device=labels.device)
+        points = torch.cat([points, padding_point], dim=1)
+        labels = torch.cat([labels, padding_label], dim=1)
 
         # Get positional encoding
         point_embedding = self.pe_layer.forward_with_coords(points, self.input_image_size)
@@ -196,6 +201,7 @@ class PromptEncoder(nn.Module):
         # Embed points
         if points is not None:
             coords, labels = points
+            print('aaaaaaaaaaaaa:  ', boxes is None)
             point_embeddings = self._embed_points(coords, labels, pad=(boxes is None))
             sparse_embeddings = torch.cat([sparse_embeddings, point_embeddings], dim=1)
 
