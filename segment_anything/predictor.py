@@ -156,7 +156,7 @@ class PromptProcessor:
 
         if text is not None and text_tokenizer is not None:
             prompt['text_inputs'] = text_tokenizer(text).to(self.device)
-        
+
         if mask_input is not None:
             prompt['mask_inputs'] = mask_input
         
@@ -295,15 +295,15 @@ class IMISPredictor:
     ) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
         """Generate mask predictions using torch tensors."""
         # Build prompt dictionary
-        prompt = self.prompt_processor.build_prompt_dict(
+        prompt_dict = self.prompt_processor.build_prompt_dict(
             point_coords, point_labels, text, mask_input, self.model.text_tokenizer
         )
         
         # Process boxes if provided
         if boxes is not None:
-            masks, low_res_masks, class_list = self._process_box_prompts(boxes, prompt)
+            masks, low_res_masks, class_list = self._process_box_prompts(boxes, prompt_dict)
         else:
-            masks, low_res_masks, class_list = self._process_single_prompt(prompt)
+            masks, low_res_masks, class_list = self._process_single_prompt(prompt_dict)
         
         # Post-process masks
         if not return_logits:
@@ -314,7 +314,9 @@ class IMISPredictor:
     
 
     def _process_box_prompts(
-        self, boxes: torch.Tensor, prompt: Dict[str, Any]
+        self, 
+        boxes: torch.Tensor, 
+        prompt: Dict[str, Any]
     ) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
         """Process multiple box prompts."""
         masks_list = []
@@ -336,9 +338,7 @@ class IMISPredictor:
         return masks, outputs['low_res_masks'], class_list
     
 
-    def _process_single_prompt(
-        self, prompt: Dict[str, Any]
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
+    def _process_single_prompt(self, prompt: Dict[str, Any]) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
         """Process a single prompt."""
         outputs = self.decode_masks(self.features, prompt)
         

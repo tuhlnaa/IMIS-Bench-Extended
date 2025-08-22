@@ -103,7 +103,7 @@ class MaskDecoder(nn.Module):
         dense_prompt_embeddings: torch.Tensor,
         text_prompt_embeddings: Optional[torch.Tensor],
         multimask_output: bool,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Predict masks given image and prompt embeddings.
         
         Args:
@@ -115,7 +115,6 @@ class MaskDecoder(nn.Module):
             multimask_output: Return multiple masks if True, single mask if False
             
         Returns:
-            Dictionary containing:
                 - low_res_masks: Predicted masks
                 - iou_pred: Mask quality predictions
                 - semantic_pred: Semantic predictions
@@ -130,12 +129,9 @@ class MaskDecoder(nn.Module):
         
         # Select appropriate mask slice based on output mode
         mask_slice = slice(1, None) if multimask_output else slice(0, 1)
-        
-        return {
-            'low_res_masks': masks[:, mask_slice, :, :],
-            'iou_pred': iou_pred[:, mask_slice],
-            'semantic_pred': semantic_pred[:, mask_slice, :]
-        }
+
+        return masks[:, mask_slice, :, :], iou_pred[:, mask_slice], semantic_pred[:, mask_slice, :]
+
     
 
     def predict_masks(

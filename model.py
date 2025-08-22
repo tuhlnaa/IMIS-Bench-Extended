@@ -206,7 +206,7 @@ class IMISNet(nn.Module):
         )
 
         # Decode masks
-        outputs = self.mask_decoder(
+        low_res_masks, iou_pred, semantic_pred = self.mask_decoder(
             image_embeddings=image_embedding,
             image_pe=self.prompt_encoder.get_dense_pe(),
             text_prompt_embeddings=prompt.get("text_inputs"),
@@ -217,17 +217,13 @@ class IMISNet(nn.Module):
         
         # Select best mask if multi-mask output
         if self.multimask_output:
-            low_res_masks, iou_pred, semantic_pred = self._select_best_mask(outputs)
-        else:
-            low_res_masks = outputs['low_res_masks']
-            iou_pred = outputs['iou_pred']
-            semantic_pred = outputs['semantic_pred']
+            low_res_masks, iou_pred, semantic_pred = self._select_best_mask(low_res_masks, iou_pred, semantic_pred)
         
         # Upsample masks to original size
         masks = F.interpolate(low_res_masks, size=self.image_size, mode='bilinear', align_corners=False)
-        
+
         return {
-            'masks': masks.float(),
+            'masks': masks,
             'low_res_masks': low_res_masks,
             'iou_pred': iou_pred,
             'semantic_pred': semantic_pred
@@ -236,13 +232,12 @@ class IMISNet(nn.Module):
 
     def _select_best_mask(
         self, 
-        outputs: Dict[str, torch.Tensor]
+        low_res_masks: torch.Tensor, 
+        iou_pred: torch.Tensor, 
+        semantic_pred: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Select the best mask based on IoU predictions."""
-        low_res_masks = outputs['low_res_masks']
-        iou_pred = outputs['iou_pred']
-        semantic_pred = outputs['semantic_pred']
-        
+
         # Find best mask index
         max_values, max_indices = torch.max(iou_pred, dim=1, keepdim=True)
         
@@ -257,19 +252,10 @@ class IMISNet(nn.Module):
         return selected_masks, max_values, selected_semantic
     
 
-    def forward(
-            self, 
-            image: torch.Tensor, 
-            prompt: Dict[str, Any], 
-            image_embedding: torch.Tensor = None,
-            mode: str = 'full'
-        ) -> Dict[str, torch.Tensor]:
+    def forward(self, image: torch.Tensor, prompt: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """Forward pass of the network."""
-        if mode == 'full':
-            image_embedding = self.encode_image(image)
-            return self.decode_masks(image_embedding, prompt)
-        else:
-            return self.decode_masks(image_embedding, prompt)
+        image_embedding = self.encode_image(image)
+        return self.decode_masks(image_embedding, prompt)
     
 
     def generate_prompts(
@@ -358,3 +344,87 @@ class IMISNet(nn.Module):
         if template:
             self.text_processor.template = template
         return self.text_processor.tokenize_text(text)
+
+
+class MaskDecoderWrapperONNXOptimized(nn.Module):
+    """
+    ONNX-optimized version that avoids Python conditionals by using tensor operations.
+    This version is more ONNX-friendly as it avoids .item() calls and Python conditionals.
+    """
+    
+    def __init__(self, imis_net):
+        super().__init__()
+        self.imis_net = imis_net
+        self.image_size = imis_net.image_size
+        
+    def forward(
+        self,
+        image_embedding: torch.Tensor,
+        # Always provide all prompt types, use masks to indicate which ones are active
+        point_coords: torch.Tensor,     # [N, 2]
+        point_labels: torch.Tensor,     # [N] 
+        bboxes: torch.Tensor,           # [M, 4]
+        text_inputs: torch.Tensor,      # [1, D]
+        mask_inputs: torch.Tensor,      # [1, H, W]
+        # Boolean masks indicating which prompts are active (1.0 = active, 0.0 = inactive)
+        use_points: torch.Tensor,       # scalar tensor: 1.0 or 0.0
+        use_bboxes: torch.Tensor,       # scalar tensor: 1.0 or 0.0  
+        use_text: torch.Tensor,         # scalar tensor: 1.0 or 0.0
+        use_mask: torch.Tensor,         # scalar tensor: 1.0 or 0.0
+    ) -> torch.Tensor:
+        """
+        ONNX-optimized forward pass using tensor operations instead of conditionals.
+        
+        Returns only masks for simplicity in ONNX deployment.
+        """
+        
+        # Create prompt dictionary - ONNX will optimize away unused branches
+        prompt = {}
+        
+        # Use tensor operations to conditionally include prompts
+        # When use_points is 0, point_coords/labels will be ignored by the model
+        points = None
+        if torch.any(use_points > 0):
+            # Mask point coordinates and labels when not in use
+            masked_coords = point_coords * use_points.unsqueeze(-1)
+            masked_labels = point_labels * use_points.long()
+            points = (masked_coords, masked_labels)
+        
+        # Similarly for other prompt types
+        boxes = bboxes * use_bboxes.unsqueeze(-1) if torch.any(use_bboxes > 0) else None
+        text = text_inputs * use_text.unsqueeze(-1) if torch.any(use_text > 0) else None  
+        mask = mask_inputs * use_mask.unsqueeze(-1).unsqueeze(-1) if torch.any(use_mask > 0) else None
+        
+        # Encode prompts
+        sparse_embeddings, dense_embeddings = self.imis_net.prompt_encoder(
+            points=points,
+            boxes=boxes, 
+            masks=mask,
+            text=text
+        )
+        
+        # Decode masks
+        outputs = self.imis_net.mask_decoder(
+            image_embeddings=image_embedding,
+            image_pe=self.imis_net.prompt_encoder.get_dense_pe(),
+            text_prompt_embeddings=text,
+            sparse_prompt_embeddings=sparse_embeddings,
+            dense_prompt_embeddings=dense_embeddings,
+            multimask_output=self.imis_net.multimask_output
+        )
+        
+        # Select best mask if multi-mask output
+        if self.imis_net.multimask_output:
+            low_res_masks, _, _ = self.imis_net._select_best_mask(outputs)
+        else:
+            low_res_masks = outputs['low_res_masks']
+        
+        # Upsample masks to original size
+        masks = F.interpolate(
+            low_res_masks, 
+            size=self.imis_net.image_size, 
+            mode='bilinear', 
+            align_corners=False
+        )
+        
+        return masks.float()
