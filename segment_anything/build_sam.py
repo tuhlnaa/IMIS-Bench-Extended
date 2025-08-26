@@ -103,6 +103,7 @@ def build_sam(
             iou_head_depth=3,
             iou_head_hidden_dim=256,
         ),
+        # text_model = CLIPTextModel(CLIPTextConfig()),
         pixel_mean=DEFAULT_PIXEL_MEAN,
         pixel_std=DEFAULT_PIXEL_STD,
     )

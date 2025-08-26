@@ -35,12 +35,10 @@ class Sam(nn.Module):
         self.image_encoder = image_encoder
         self.prompt_encoder = prompt_encoder
         self.mask_decoder = mask_decoder
-        self.register_buffer(
-            "pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), persistent=False
-        )
-        self.register_buffer(
-            "pixel_std", torch.tensor(pixel_std).view(-1, 1, 1), persistent=False
-        )
+        # self.text_model = text_model
+        # self.text_out_dim = nn.Linear(512, 768)
+        self.register_buffer("pixel_mean", torch.tensor(pixel_mean).view(-1, 1, 1), persistent=False)
+        self.register_buffer("pixel_std", torch.tensor(pixel_std).view(-1, 1, 1), persistent=False)
 
 
     @property

@@ -148,7 +148,6 @@ class IMISNet(nn.Module):
         self.image_encoder = sam.image_encoder
         self.mask_decoder = sam.mask_decoder
         self.prompt_encoder = sam.prompt_encoder
-        self.text_model = text_model
         
         # Configuration
         self.category_weights = category_weights
