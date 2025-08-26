@@ -79,7 +79,7 @@ def process_folder(folder_path):
         return
     
     # Find all GIF files
-    gif_files = list(folder_path.glob("*.gif")) + list(folder_path.glob("*.GIF"))
+    gif_files = list(folder_path.glob("*.gif"))
     
     if not gif_files:
         print(f"✗ No GIF files found in {folder_path}")

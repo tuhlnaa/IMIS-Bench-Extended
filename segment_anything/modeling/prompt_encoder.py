@@ -201,7 +201,6 @@ class PromptEncoder(nn.Module):
         # Embed points
         if points is not None:
             coords, labels = points
-            print('aaaaaaaaaaaaa:  ', boxes is None)
             point_embeddings = self._embed_points(coords, labels, pad=(boxes is None))
             sparse_embeddings = torch.cat([sparse_embeddings, point_embeddings], dim=1)
 
