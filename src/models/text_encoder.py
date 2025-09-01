@@ -117,6 +117,9 @@ class TextProcessorV2:
         # Tokenize
         tokens = self.tokenizer(text_list, padding=True, return_tensors="pt")
         tokens = {k: v.to(self.device) for k, v in tokens.items()}
+        # tokens
+        # input_ids: torch.Size([1, 11]), torch.int64  max: 49407 min: 269
+        # attention_mask: torch.Size([1, 11]), torch.int64 max: 1 min: 1
         
         # Get text embeddings using standalone encoder
         with torch.no_grad():
@@ -125,109 +128,6 @@ class TextProcessorV2:
         return text_embedding
     
 
-    def _normalize_text(self, text: str) -> str:
-        """Normalize text for processing."""
-        if self.categories_map and text in self.categories_map:
-            text = self.categories_map[text][0]
-        
-        text = text.lower().replace('_', ' ').replace("-", " ")
-        text = re.sub(r'\s+', ' ', text)
-        return text.strip()
-    
-
-    def get_category_labels(self, classes: List[str]) -> torch.Tensor:
-        """Convert class names to category indices."""
-        if not self.categories_map:
-            raise ValueError("Category weights not loaded")
-        
-        norm_targets = []
-        for cls in classes:
-            cls_mapped = self.categories_map[cls][1]
-            category = cls_mapped.lower().replace('_', ' ').replace("-", " ")
-            category = category.replace('left', '').replace('right', '').strip()
-            category = re.sub(r'\s+', ' ', category)
-            norm_targets.append(category)
-        
-        indices = [self.category_to_index[cat] for cat in norm_targets]
-        return torch.tensor(indices).unsqueeze(-1).to(self.device)
-    
-
-    def compute_category_loss(
-        self, 
-        semantic_preds: torch.Tensor, 
-        classes: List[str], 
-        ce_loss: nn.Module
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute category prediction loss."""
-        if not self.src_weights:
-            raise ValueError("Category weights not loaded")
-        
-        labels = self.get_category_labels(classes)
-        logits = F.normalize(semantic_preds, dim=-1) @ self.src_weights
-        probs = F.softmax(logits, dim=-1)
-        loss = ce_loss(probs.squeeze(1), labels.squeeze(1))
-        
-        return loss, probs
-
-
-class TextProcessor:
-    """Handles text processing and category mapping."""
-    
-    def __init__(
-        self, 
-        device: torch.device,
-        tokenizer_name: str = 'openai/clip-vit-base-patch32',
-        category_weights_path: Optional[str] = None
-    ):
-        self.device = device
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        self.template = PromptConfig().template
-        
-        # Category mapping attributes
-        self.src_weights = None
-        self.categories_map = None
-        self.category_to_index = None
-        self.index_to_category = None
-        
-        if category_weights_path:
-            self.load_category_weights(category_weights_path)
-    
-    
-    def load_category_weights(self, weights_path: str) -> None:
-        """Load category weights and mappings from file."""
-        with open(weights_path, "rb") as f:
-            (self.src_weights, 
-             self.categories_map, 
-             self.category_to_index, 
-             self.index_to_category) = pickle.load(f)
-            self.src_weights = torch.tensor(self.src_weights).to(self.device)
-    
-
-    def tokenize_text(
-        self, 
-        text: List[str], 
-        text_model: nn.Module,
-        text_out_dim: nn.Module
-    ) -> torch.Tensor:
-        """Tokenize and encode text prompts."""
-        # Normalize text
-        norm_text = [self._normalize_text(t) for t in text]
-        text_list = [self.template.format(t) for t in norm_text]
-        
-        # Tokenize
-        tokens = self.tokenizer(text_list, padding=True, return_tensors="pt")
-        tokens = {k: v.to(self.device) for k, v in tokens.items()}
-        
-        # Get text embeddings
-        with torch.no_grad():
-            text_outputs = text_model(**tokens)
-        
-        text_embedding = text_outputs.pooler_output
-        text_embedding = text_out_dim(text_embedding)
-        
-        return text_embedding
-    
-    
     def _normalize_text(self, text: str) -> str:
         """Normalize text for processing."""
         if self.categories_map and text in self.categories_map:

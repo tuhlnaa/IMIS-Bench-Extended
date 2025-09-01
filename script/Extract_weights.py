@@ -8,8 +8,8 @@ PROJECT_ROOT = Path(__file__).parents[1]
 sys.path.append(str(PROJECT_ROOT))
 
 from configs.config import parse_args
-from src.utils.inference import determine_device, load_model
-from src.models.text_encoder import StandaloneTextEncoder, TextProcessorV2
+from src.utils.inference import determine_device
+from src.models.text_encoder import StandaloneTextEncoder
 from segment_anything.build_sam import get_sam_model
 
 class WeightExtractor:

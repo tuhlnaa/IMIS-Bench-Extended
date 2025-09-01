@@ -234,6 +234,11 @@ class IMISPredictor:
         self.image_size = (self.config.model.image_size, self.config.model.image_size)
     
 
+    def reset_image(self) -> None:
+        """Reset the currently set image and clear cached features."""
+        self._reset_state()
+
+
     def predict(
         self,
         point_coords: Optional[np.ndarray] = None,
@@ -298,7 +303,7 @@ class IMISPredictor:
         prompt_dict = self.prompt_processor.build_prompt_dict(
             point_coords, point_labels, text, mask_input, self.model.text_tokenizer
         )
-        
+
         # Process boxes if provided
         if boxes is not None:
             masks, low_res_masks, class_list = self._process_box_prompts(boxes, prompt_dict)
@@ -346,8 +351,3 @@ class IMISPredictor:
         class_pred = self.classification_handler.get_class_prediction(outputs.get('semantic_pred'))
         
         return masks, outputs['low_res_masks'], [class_pred]
-    
-
-    def reset_image(self) -> None:
-        """Reset the currently set image and clear cached features."""
-        self._reset_state()

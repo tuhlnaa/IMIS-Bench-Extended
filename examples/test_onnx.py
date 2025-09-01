@@ -37,6 +37,7 @@ class ONNXMaskDecoder:
         print(f"Input names: {self.input_names}")
         print(f"Output names: {self.output_names}")
     
+
     def prepare_inputs(self, 
                       image_embedding: np.ndarray,
                       point_coords: Optional[np.ndarray] = None,
@@ -102,6 +103,7 @@ class ONNXMaskDecoder:
         
         return inputs
     
+
     def predict(self, inputs: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         """
         Run inference on the ONNX model.
@@ -118,11 +120,13 @@ class ONNXMaskDecoder:
         # Return as dictionary
         return {name: output for name, output in zip(self.output_names, outputs)}
     
+
     def __call__(self, **kwargs) -> Dict[str, np.ndarray]:
         """
         Convenience method for running inference.
         """
         inputs = self.prepare_inputs(**kwargs)
+        
         return self.predict(inputs)
 
 
@@ -143,7 +147,9 @@ def load_and_test_model(onnx_path: str):
     # Option 1: Using point coordinates
     point_coords = np.array([[[120.0, 80.0]]], dtype=np.float32)  # Single point
     point_labels = np.array([[1]], dtype=np.int64)  # Positive point
-    
+
+
+
     print("Running inference with point inputs...")
     outputs = model(
         image_embedding=image_embedding,
@@ -235,4 +241,3 @@ if __name__ == "__main__":
         print("Please make sure you have exported the model first.")
     except Exception as e:
         print(f"❌ Error loading model: {e}")
-        print("Please check that ONNX Runtime is installed: pip install onnxruntime")
