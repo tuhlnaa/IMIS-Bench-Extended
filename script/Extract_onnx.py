@@ -137,11 +137,3 @@ if __name__ == "__main__":
         device,
         "output/checkpoint/mask_decoder_wrapper_IMISNet.onnx",
     )
-    
-    # # Test the wrapper before export
-    # with torch.no_grad():
-    #     output = wrapper(**example_inputs)
-    #     print("Wrapper output shapes:")
-    #     for i, out in enumerate(output):
-    #         print(f"  Output {i}: {out.shape}")
-    # pass

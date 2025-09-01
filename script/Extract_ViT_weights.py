@@ -111,11 +111,11 @@ def verify_extraction(
     
     # Create original model and load full checkpoint
     original_sam = build_sam(
+        config=config,
         encoder_embed_dim=config["encoder_embed_dim"],
         encoder_depth=config["encoder_depth"],
         encoder_num_heads=config["encoder_num_heads"],
         encoder_global_attn_indexes=config["encoder_global_attn_indexes"],
-        image_size=1024,  # or your image size
         checkpoint=original_checkpoint_path,
         pretrain_model=config["pretrain_model"],
         prompt_embed_dim=prompt_embed_dim
