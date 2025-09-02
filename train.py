@@ -17,12 +17,12 @@ from torch.backends import cudnn
 from torch.cuda import amp
 from multiprocessing import Manager
 from torch.nn.parallel import DistributedDataParallel as DDP
-from data_loader import get_loader 
 from model import IMISNet
 from torch.nn import CrossEntropyLoss
 
 from src.utils.build_sam import sam_model_registry
 from src.utils.losses import FocalDiceMSELoss
+from src.data.data_loader import get_loader
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -67,7 +67,7 @@ os.makedirs(MODEL_SAVE_PATH, exist_ok=True)
 
 
 def build_model(args):
-    category_weights = 'dataloaders/categories_weight.pkl'
+    category_weights = 'data/categories_weight.pkl'
     sam = sam_model_registry[args.model_type](args).to(device)
     imis = IMISNet(sam, test_mode=args.test_mode, select_mask_num=args.mask_num, category_weights=category_weights).to(device)
     if args.multi_gpu:

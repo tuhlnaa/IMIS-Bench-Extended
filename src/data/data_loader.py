@@ -1,14 +1,13 @@
 import os
 import ast
 import json
-from omegaconf import OmegaConf
 import torch
 import random
 import argparse
-
 import numpy as np
 import torch.distributed as dist
 
+from omegaconf import OmegaConf
 from monai import data, transforms
 from scipy import sparse
 from scipy import ndimage
@@ -17,8 +16,8 @@ from torch.utils.data.distributed import DistributedSampler
 from typing import Dict, List, Tuple, Any
 from pathlib import Path
 from PIL import Image
-from configs.config import parse_args
-from dataloaders.data_utils import (
+
+from src.data.data_utils import (
     cleanse_pseudo_label,
     get_points_from_mask, 
     get_bboxes_from_mask

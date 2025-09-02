@@ -17,8 +17,8 @@ from typing import Any, Dict, Tuple, Union
 from omegaconf import OmegaConf
 
 # Import custom modules
-from data_loader import get_loader 
 from configs.config import parse_args
+from src.data.data_loader import get_loader 
 from src.utils.inference import determine_device, load_model
 from src.utils.metrics import SegmentationMetrics
 from src.utils.losses import FocalDiceMSELoss

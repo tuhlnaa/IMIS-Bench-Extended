@@ -1,6 +1,4 @@
-import re
 import random
-import pickle
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,7 +9,7 @@ from typing import Dict, Optional, Tuple, List, Any
 from omegaconf import OmegaConf
 
 # Import custom modules
-from dataloaders.data_utils import get_points_from_mask, get_bboxes_from_mask
+from src.data.data_utils import get_points_from_mask, get_bboxes_from_mask
 from src.models.text_encoder import TextProcessorV2
 
 
