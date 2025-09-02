@@ -7,7 +7,7 @@ import torch.nn as nn
 from timm.layers import resample_abs_pos_embed_nhwc
 
 # Import custom modules
-from segment_anything.modeling.common import LayerNorm2d
+from .common import LayerNorm2d
 
 
 class ViT(nn.Module):

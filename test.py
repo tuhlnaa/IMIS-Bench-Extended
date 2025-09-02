@@ -13,16 +13,15 @@ from pathlib import Path
 from tqdm import tqdm
 from torch.backends import cudnn
 from torch.utils.data import DataLoader 
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Tuple, Union
 from omegaconf import OmegaConf
-from utils import FocalDiceMSELoss
 
 # Import custom modules
 from data_loader import get_loader 
 from configs.config import parse_args
 from src.utils.inference import determine_device, load_model
 from src.utils.metrics import SegmentationMetrics
-
+from src.utils.losses import FocalDiceMSELoss
 
 # Configure logging
 logging.basicConfig(

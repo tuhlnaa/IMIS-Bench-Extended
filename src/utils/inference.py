@@ -12,8 +12,8 @@ from dataclasses import dataclass
 
 # Import custom modules
 from model import IMISNet
-from segment_anything.build_sam import get_sam_model
-from segment_anything.predictor import IMISPredictor, ImagePreprocessor
+from src.utils.build_sam import get_sam_model
+from src.utils.predictor import IMISPredictor, ImagePreprocessor
 from src.utils.visualization import VisualizationUtils
 
 @dataclass
