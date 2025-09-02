@@ -7,9 +7,9 @@ from transformers import CLIPTextConfig, CLIPTextModel
 from omegaconf import OmegaConf
 
 # Import custom modules
-from .modeling import ViT, MaskDecoder, PromptEncoder, Sam, TwoWayTransformer
+from .modeling import ViT, MaskDecoder, Sam, PromptEncoder, TwoWayTransformer
 from src.models.text_encoder import StandaloneTextEncoder
-
+# from src.models.sam_model import Sam
 
 # Model configuration constants
 SAM_CONFIGS = {

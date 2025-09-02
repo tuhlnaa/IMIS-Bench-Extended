@@ -166,13 +166,7 @@ class PromptEncoder(nn.Module):
             return text.shape[0]
         else:
             return 1
-
-
-    @property
-    def device(self) -> torch.device:
-        """Get the device of the model."""
-        return self.point_embeddings[0].weight.device
-
+        
 
     def forward(
         self,
@@ -222,6 +216,12 @@ class PromptEncoder(nn.Module):
             )
 
         return sparse_embeddings, dense_embeddings
+
+
+    @property
+    def device(self) -> torch.device:
+        """Get the device of the model."""
+        return self.point_embeddings[0].weight.device
 
 
 class PositionEmbeddingRandom(nn.Module):
