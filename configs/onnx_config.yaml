@@ -1,0 +1,39 @@
+# config/segmentation_config.yaml
+
+data_dir: "D:/Kai/DATA_Set_2/medical-segmentation/BTCV"
+
+checkpoint_path: "output/checkpoint/IMISNet-B_non_CLIP_weights.pth"  #  IMISNet-B.pth   IMISNet-B_non_CLIP_weights.pt
+checkpoint_vit_path: "output/checkpoint/vit_b_weights_only.pth"
+checkpoint_clip_path: "output/checkpoint/CLIP_weights_only.pth"
+category_weights_path: "data/categories_weight.pkl"
+
+pretrain_path: null
+
+# Device & distributed training parameters
+device:
+  device: "cuda"   # Device to use: "cpu", "cuda:0", etc. (leave null for auto-detection)
+  multi_gpu:
+    enabled: false
+    rank: 0  # GPU rank for distributed training
+    nodes: 1
+    gpu_ids: 0
+
+# Model configuration
+model:
+  test_mode: true
+  image_size: 1024
+  batch_size: 1
+  sam_model_type: "vit_b"  # Could be "vit_b", "vit_l", "vit_h"
+
+
+dataset:
+  mask_num: null
+  prompt_mode: "points"
+  inter_num: 1
+  num_workers: 1
+  
+
+# Prediction configuration
+prediction:
+  multimask_output: false
+

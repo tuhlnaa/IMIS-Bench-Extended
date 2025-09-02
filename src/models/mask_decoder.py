@@ -107,11 +107,11 @@ class MaskDecoder(nn.Module):
         """Predict masks given image and prompt embeddings.
         
         Args:
-            image_embeddings: Embeddings from image encoder [B, 256, 64, 64]
-            image_pe: Positional encoding [1, 256, 64, 64]
-            sparse_prompt_embeddings: Point and box embeddings [B, 3, 256]
-            dense_prompt_embeddings: Mask input embeddings [B, 256, 64, 64]
-            text_prompt_embeddings: Optional text embeddings [B, 256]
+            image_embeddings: Embeddings from image encoder [B, 256, 64, 64] # [B, 768, 64, 64]
+            image_pe: Positional encoding [1, 256, 64, 64]  # [B, 768, 64, 64]
+            sparse_prompt_embeddings: Point and box embeddings [B, 3, 256] # [B, 2, 768]
+            dense_prompt_embeddings: Mask input embeddings [B, 256, 64, 64]  # [B, 768, 64, 64]
+            text_prompt_embeddings: Optional text embeddings [B, 256]   # [B, 768]
             multimask_output: Return multiple masks if True, single mask if False
             
         Returns:
@@ -119,6 +119,7 @@ class MaskDecoder(nn.Module):
                 - iou_pred: Mask quality predictions
                 - semantic_pred: Semantic predictions
         """
+
         masks, iou_pred, semantic_pred = self.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=image_pe,

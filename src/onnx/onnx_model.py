@@ -10,8 +10,8 @@ from torch.nn import functional as F
 
 from typing import Tuple
 
-from ..modeling import Sam
-from .amg import calculate_stability_score
+from src.models.sam import Sam
+from src.utils.amg import calculate_stability_score
 
 
 class SamOnnxModel(nn.Module):
@@ -25,14 +25,16 @@ class SamOnnxModel(nn.Module):
     def __init__(
         self,
         model: Sam,
+        img_size: int,
         return_single_mask: bool,
         use_stability_score: bool = False,
         return_extra_metrics: bool = False,
     ) -> None:
         super().__init__()
-        self.mask_decoder = model.mask_decoder
         self.model = model
-        self.img_size = model.image_encoder.img_size
+        self.mask_decoder = model.mask_decoder
+        self.img_size = img_size
+
         self.return_single_mask = return_single_mask
         self.use_stability_score = use_stability_score
         self.stability_score_offset = 1.0
