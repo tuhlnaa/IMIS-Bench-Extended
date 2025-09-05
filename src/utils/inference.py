@@ -1,6 +1,9 @@
 # src/utils/inference.py
+import time
 import torch
 import numpy as np
+
+from dataclasses import dataclass
 from matplotlib import pyplot as plt
 from omegaconf import OmegaConf
 from pathlib import Path
@@ -8,7 +11,6 @@ from PIL import Image
 from rich import print
 from typing import Optional, Tuple, Dict, Any, List
 from torch.nn.parallel import DistributedDataParallel as DDP
-from dataclasses import dataclass
 
 # Import custom modules
 from model import IMISNet
@@ -59,7 +61,7 @@ class InteractiveSegmentationSession:
         if (self.current_image_state is not None and 
             self.current_image_state.image_path == str(image_path)):
             print(f"[yellow]Image already loaded: {image_path.name}[/yellow]")
-            return self.current_image_state
+            return self.current_image_state, 0
         
         print(f"[blue]Loading new image: {image_path.name}[/blue]")
         
@@ -68,9 +70,11 @@ class InteractiveSegmentationSession:
         image_array = np.array(image)
         
         # Preprocess and encode
+        start_time = time.time()
         input_tensor = self.image_preprocessor.preprocess_image(image_array, "RGB")
         features = self.image_encoder(input_tensor.to(self.device))
-        
+        end_time = time.time()
+
         # Update predictor state
         self.predictor.features = features
         self.predictor.original_size = image_array.shape[:2]
@@ -85,7 +89,7 @@ class InteractiveSegmentationSession:
             image_path=str(image_path)
         )
         
-        return self.current_image_state
+        return self.current_image_state, end_time - start_time
     
 
     def run_examples(self, examples: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
