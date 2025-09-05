@@ -1,22 +1,3 @@
-# Usage:
-
-# [Windows] - PowerShell
-# Get-Content requirements.txt | ForEach-Object {
-#     if ($_ -match "\S" -and -not $_.StartsWith("#")) {
-#         Write-Host "Installing $_..." -ForegroundColor Cyan
-#         pip install $_
-#     }
-# }
-
-# [Linux]
-# while read line; do
-#   # Skip empty lines and comments
-#   if [[ -n "$line" && ! "$line" =~ ^[[:space:]]*# ]]; then
-#     echo "Installing $line..."
-#     pip install $line
-#   fi
-# done < requirements.txt
-
 torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
 omegaconf==2.3.0
 tensorboard==2.20.0
@@ -24,6 +5,7 @@ rich==14.1.0
 tqdm==4.67.1
 matplotlib==3.10.5
 
+gdown==5.2.0
 ninja==1.13.0
 scipy==1.16.1
 monai==1.5.0

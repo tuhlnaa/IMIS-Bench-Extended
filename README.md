@@ -38,7 +38,12 @@ We simulate continuous interactive segmentation training.
 
 ## Installation
 ```sh
-git clone https://github.com/uni-medical/IMIS-Bench.git
+# Ubuntu
+apt update
+apt install git
+
+# Ubuntu/Windows
+git clone https://github.com/tuhlnaa/IMIS-Bench-Extended.git
 ```
 
 <br>

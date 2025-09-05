@@ -266,9 +266,14 @@ if __name__ == "__main__":
 
 """
 RTX 2080 Ti Pytorch 2.6 model
-
 Vision Transformer Encoder: 196 ms
 Single Click: 17 ms
 Bounding Boxe: 16 ms
 Text Prompt: 28 ms
+
+RTX 4080 Super Pytorch 2.6 model
+Vision Transformer Encoder: 96 ms
+Single Click: 11 ms
+Bounding Boxe: 5 ms
+Text Prompt: 10 ms
 """
