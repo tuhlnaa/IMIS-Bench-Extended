@@ -16,7 +16,7 @@ def main():
     config = parse_args()
     
     # Initialize session once
-    session = InteractiveSegmentationSession(config, output_dir="output")
+    session = InteractiveSegmentationSession(config, output_dir="output", save=False)
 
     examples1 = [
         # Single-step examples

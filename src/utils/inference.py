@@ -32,11 +32,12 @@ class InteractiveSegmentationSession:
     Separates model initialization from image processing and example execution.
     """
     
-    def __init__(self, config: OmegaConf, output_dir: str = "output"):
+    def __init__(self, config: OmegaConf, output_dir: str = "output", save: bool = True):
         self.config = config
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+        self.save = save
+
         # Initialize model components once
         self.device = determine_device(config)
         self.model, self.predictor, self.image_encoder = load_model(config, self.device)
@@ -94,13 +95,17 @@ class InteractiveSegmentationSession:
         
         # Initialize visualization utils
         image_path = Path(self.current_image_state.image_path)
-        vis_utils = VisualizationUtils(self.output_dir, image_path.stem)
-        
-        # Display original image
-        plt.figure()
-        plt.imshow(self.current_image_state.image)
-        vis_utils.save_plot("Original Image", "original")
-        
+
+        if self.save == True:
+            vis_utils = VisualizationUtils(self.output_dir, image_path.stem)
+            
+            # Display and save original image
+            plt.figure()
+            plt.imshow(self.current_image_state.image)
+            vis_utils.save_plot("Original Image", "original")
+        else:
+            vis_utils = None
+
         # Process examples
         results = {}
         for example in examples:
@@ -294,27 +299,10 @@ def run_segmentation(
     # Remove None values
     vis_kwargs = {k: v for k, v in vis_kwargs.items() if v is not None}
     
-    # Visualize results
-    vis_utils.visualize_result(
-        image, masks, f"{example['name']} Result", "segmentation", **vis_kwargs
-    )
+    if vis_utils != None:
+        # Visualize and save results
+        vis_utils.visualize_result(
+            image, masks, f"{example['name']} Result", "segmentation", **vis_kwargs
+        )
     
     return masks, logits, category_pred
-
-
-# Backward compatibility function (deprecated)
-def run_interactive_demo(
-    config: OmegaConf,
-    image_path: str,
-    examples: List[Dict[str, Any]],
-    output_dir: str = "output",
-) -> Dict[str, Dict[str, Any]]:
-    """
-    DEPRECATED: Use InteractiveSegmentationSession for better performance.
-    This function is kept for backward compatibility.
-    """
-    print("[yellow]Warning: run_interactive_demo is deprecated. Use InteractiveSegmentationSession for better performance.[/yellow]")
-    
-    session = InteractiveSegmentationSession(config, output_dir)
-    return session.process_image_with_examples(image_path, examples)
-
