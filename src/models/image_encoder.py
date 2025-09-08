@@ -104,29 +104,3 @@ class ViT(nn.Module):
         if trainable_only:
             return sum(p.numel() for p in self.parameters() if p.requires_grad)
         return sum(p.numel() for p in self.parameters())
-
-
-def main():
-    # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # Create sample input
-    batch_size = 4
-    x = torch.randn(batch_size, 3, 256, 256).to(device)
-
-    # Initialize model
-    model = ViT().to(device)
-
-    # Test forward pass
-    with torch.no_grad():
-        output = model(x)
-
-    print(device)
-    print(f"Input shape: {x.shape}")
-    print(f"Output shape: {output.shape}")
-    print(f"Trainable parameters: {model.get_num_params(trainable_only=True):,}")
-    print(f"Total parameters: {model.get_num_params(trainable_only=False):,}")
-
-
-if __name__ == '__main__':
-    main()

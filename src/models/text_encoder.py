@@ -118,9 +118,9 @@ class TextProcessorV2:
         tokens = self.tokenizer(text_list, padding=True, return_tensors="pt")
         tokens = {k: v.to(self.device) for k, v in tokens.items()}
         # tokens
-        # input_ids: torch.Size([1, 11]), torch.int64  max: 49407 min: 269
-        # attention_mask: torch.Size([1, 11]), torch.int64 max: 1 min: 1
-        
+        # tokens["input_ids"]: torch.Size([1, 11]), torch.int64  max: 49407 min: 269
+        # tokens["attention_mask"]: torch.Size([1, 11]), torch.int64 max: 1 min: 1
+
         # Get text embeddings using standalone encoder
         with torch.no_grad():
             text_embedding = self.text_encoder(**tokens)

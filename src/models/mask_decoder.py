@@ -119,7 +119,6 @@ class MaskDecoder(nn.Module):
                 - iou_pred: Mask quality predictions
                 - semantic_pred: Semantic predictions
         """
-
         masks, iou_pred, semantic_pred = self.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=image_pe,
@@ -251,6 +250,12 @@ class MaskDecoder(nn.Module):
         
         return masks + text_mask
 
+    def get_num_params(self, trainable_only: bool = True) -> int:
+        """Get the number of parameters in the model."""
+        if trainable_only:
+            return sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return sum(p.numel() for p in self.parameters())
+    
 
 class MLP(nn.Module):
     """
@@ -306,4 +311,3 @@ class MLP(nn.Module):
             x = torch.sigmoid(x)
         
         return x
-

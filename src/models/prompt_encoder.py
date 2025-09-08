@@ -179,10 +179,10 @@ class PromptEncoder(nn.Module):
         Embed different types of prompts.
 
         Args:
-            points: Point coordinates and labels to embed
-            boxes: Boxes to embed
-            masks: Masks to embed
-            text: Text embeddings to include
+            points: Point coordinates and labels to embed  # ([1, 1, 2], [1, 1]), float32, int32
+            boxes: Boxes to embed  # [1, 1, 4]
+            masks: Masks to embed  # [1, 1, 256, 256]
+            text: Text embeddings to include  # [1, 768]
 
         Returns:
             Tuple of:
